@@ -11,7 +11,7 @@ The study was carried out by Lukas Beiske, University of Konstanz, Department of
 
 ## Study Design
 
-![study-design](documentation/study-design.pdf)
+![study-design](documentation/study-design.png)
 
 ## Note
 
