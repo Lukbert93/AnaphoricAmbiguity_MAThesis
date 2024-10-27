@@ -1,0 +1,1875 @@
+---
+title: "Ambiguity and Anaphora - An Analysis of Disagreement in Anaphoric Annotation"
+author: "Lukas Beiske"
+date: "29 10 2024"
+output: html_document
+---
+
+## Libraries
+
+```{r message = FALSE, echo=TRUE, warning=FALSE, results="hide"}
+library(xml2)
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(knitr)
+library(stringr)
+library(tidyr)
+library(kableExtra)
+library(grid)
+library(gridExtra)
+```
+
+## Data Treatment
+
+Since information about markables is stored in XML files, these are first converted into CSV format for better handling. The following code is a function that is responsible for this conversion. It loads an XML file, takes care of the XML namespaces, and then extracts the information of the individual markables. A for-loop makes it possible to repeat this process for all XML files in the folder. The output is stored in a separate folder called 'output_csv' within the input folder and consists of one CSV file per XML input file.
+
+```{r xml to csv, message = FALSE, echo=TRUE, warning=FALSE}
+#define the function; argument = individual XML files instantiated below
+xml_to_csv <- function(xml_ind, output_f) {
+  #read the file via read_xml (xml2)
+  xml_data <- read_xml(xml_ind)
+  #strip default namespaces via xml_ns_stripfrom document (xml2)
+  xml_data <- xml_ns_strip(xml_data)
+  #data extraction
+  xml_data %>%
+    #retrieve all attributes values as a named character vector, bind rows and create csv-file (name derived from original XML file)
+    xml_find_all("markable") %>% 
+    xml_attrs() %>%
+    bind_rows() %>%
+    write_csv(file = file.path(output_f, paste0(sub(".xml", ".csv", basename(xml_ind)))))
+}
+
+#path to input folders with XML files
+folders_xml <- c("../Statistics/data/ARRAU/RST",
+                 "../Statistics/data/ARRAU/Trains_91",
+                 "../Statistics/data/PD/gutenberg",
+                 "../Statistics/data/PD/wiki")
+
+#for-loop for iterating through input folders
+for (input_f in folders_xml) {
+  #create a list of contained XML files
+  all_xml_ind <- list.files(path = input_f, pattern = "\\.xml$", full.names = TRUE)
+  #create output folders
+  output_f <- file.path(input_f, "output_csv")
+  dir.create(output_f, showWarnings = FALSE)
+  
+  for (xml_ind in all_xml_ind) {
+    xml_to_csv(xml_ind, output_f)
+  }
+}
+```
+
+### Create a DF for ARRAU data
+
+The following code creates data frames from the data of the ARRAU corpus.
+
+```{r message=FALSE, results='hide'}
+
+#define function
+create_df <- function(path_f, name_ds) {
+  #create a list with all CSV files
+  csv_list <- list.files(path_f, pattern = "\\.csv$", full.names = TRUE)
+  #create empty data frame 
+  dataset <- data.frame()
+  #for-loop to iterate through the CSV files and extract the data
+  for (csv_ind in csv_list) {
+    csv_data <- read_csv(csv_ind)
+    #add the extra columns for data-set and file name
+    csv_data$dataset <- name_ds
+    csv_data$file_name <- basename(csv_ind)
+    #combine the data of the individual files
+    dataset <- bind_rows(dataset, csv_data)
+  }
+  return(dataset)
+}
+
+#define the paths to the folders containinng the CSV files
+RST_path <- "../Statistics/data/ARRAU/RST/output_csv"
+TRAINS91_path <- "../Statistics/data/ARRAU/Trains_91/output_csv"
+
+#apply function to the CSV files of the RST domain; create df
+RST_df <- create_df(RST_path, "RST")
+
+#apply function to the CSV files of the TRAINS domain; create df
+TRAINS91_df <- create_df(TRAINS91_path, "Trains_91")
+
+#combine the RST_df and TRAINS91_df data frames
+COMB_RST_TRAINS_df <- bind_rows(RST_df, TRAINS91_df)
+
+```
+
+### Create a DF for Phrase Detectives (PD) data
+
+The following code creates data frames from the data of the PD corpus.
+
+```{r message=FALSE, results='hide'}
+
+#define function
+create_df <- function(path_f, name_ds) {
+  #create a list with all CSV files
+  csv_list <- list.files(path_f, pattern = "\\.csv$", full.names = TRUE)
+  #create empty data frame 
+  dataset <- data.frame()
+  #for-loop to iterate through the CSV files and extract the data
+  for (csv_ind in csv_list) {
+    csv_data <- read_csv(csv_ind)
+    #add the extra columns for data-set and file name
+    csv_data$dataset <- name_ds
+    csv_data$file_name <- basename(csv_ind)
+    #combine the data of the individual files
+    dataset <- bind_rows(dataset, csv_data)
+  }
+  return(dataset)
+}
+
+#define the paths to the folders containinng the CSV files
+GB_path <- "../Statistics/data/PD/gutenberg/output_csv"
+WIKI_path <- "../Statistics/data/PD/wiki/output_csv"
+
+#apply function to the CSV files of the gutenberg domain; create df
+GB_df <- create_df(GB_path, "GB")
+
+#apply function to the CSV files of the wikipedia domain; create df
+WIKI_df <- create_df(WIKI_path, "Wiki")
+
+#combine the RST_df and TRAINS91_df data frames
+COMB_GB_WIKI_df <- bind_rows(GB_df, WIKI_df)
+
+```
+
+```{r}
+## combine ARRAU and PD data; removal of columns so that both observe the same
+
+# Remove 'disagreement_type' column from COMB_GB_WIKI_df; new df called CGW
+CGW <- COMB_GB_WIKI_df[, -which(names(COMB_GB_WIKI_df) == "disagreement_type"), drop = FALSE]
+
+# Remove multiple columns from COMB_RST_TRAINS_df; new df is called CRT
+CRT <- COMB_RST_TRAINS_df[, -which(names(COMB_RST_TRAINS_df) %in% c("on_map", "on_map_2", "objectadditional")), drop = FALSE]
+
+# Combine CRT and CGW in a new df called combined_df
+combined_df <- rbind(CRT, CGW)#FOR FURTHER ANALYSIS
+
+##sortcolumns
+#general information in fixed order
+general_info <- c("min_words", "min_ids", "id", "file_name", "span", "mmax_level", "dataset", "comment")
+
+#further (gramm.) information in fixed order
+info_gramm <- c("number", "gender", "person", "gram_fnc", "ambiguity")
+
+#annotated information sorted alphabetically
+all_columns <- names(combined_df)
+anno_info <- setdiff(all_columns, c(general_info, info_gramm))  # Find remaining columns
+anno_info_sorted <- sort(anno_info)  # Sort alphabetically
+
+# Reorder DataFrame by combining these three groups
+df_sorted <- combined_df[, c(general_info, info_gramm, anno_info_sorted)]
+
+# Make all character via list, then put it back in a data frame
+df_sorted <- lapply(df_sorted, as.character)
+
+df_sorted <- as.data.frame(df_sorted)
+
+# View the reordered DataFrame
+#print(df_sorted)
+```
+
+
+## Overview of Preprocessed Data
+
+```{r 'overview1', echo=FALSE, results = 'asis'}
+#count number of rows (i.e. markables in the df) in ARRAU df
+total_rows_ARRAU <- nrow(COMB_RST_TRAINS_df)
+#count number of rows (i.e. markables in the df) in PF df
+total_rows_PD <- nrow(COMB_GB_WIKI_df)
+
+#print the output
+cat("Total number of markables in the ARRAU data:", total_rows_ARRAU, "\n")
+
+cat("\nTotal number of markables in the PD data:", total_rows_PD, "\n")
+
+cat("\nDistribution of the ambiguity attribute in ARRAU:\n")
+table(COMB_RST_TRAINS_df$ambiguity)
+
+cat("\nDistribution of the ambiguity attribute in PD:\n")
+table(COMB_GB_WIKI_df$ambiguity)
+
+```
+
+```{r 'overview2', echo=FALSE, results = 'asis'}
+#count number of rows (i.e. markables in the df) in both dfs
+total_rows_ARRAU_PD <- nrow(combined_df)
+
+#print the output
+cat("Thus, the total number of markables from both data sets amounts to", total_rows_ARRAU_PD)
+
+
+cat(", with the following distribution of the ambiguity attribute:\n")
+table(combined_df$ambiguity)
+```
+
+The categorisation that follows below will, for now, concentrate on markables annotated as being ambiguous.
+
+```{r overview3, echo=FALSE}
+##calculate the distributions
+#ARRAU
+distribution_amb_ARRAU <- COMB_RST_TRAINS_df %>%
+  count(ambiguity) %>%
+  mutate(percentage = n / sum(n) * 100,
+         label = sprintf("%.2f%%", percentage))
+#PD
+distribution_amb_PD <- COMB_GB_WIKI_df %>%
+  count(ambiguity) %>%
+  mutate(percentage = n / sum(n) * 100,
+         label = sprintf("%.2f%%", percentage))
+#combined
+distribution_amb_combined <- combined_df %>%
+  count(ambiguity) %>%
+  mutate(percentage = n / sum(n) * 100,
+         label = sprintf("%.2f%%", percentage))
+
+##visualize
+#ARRAU
+ggplot(distribution_amb_ARRAU, aes(x = ambiguity, y = percentage, fill = ambiguity)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = label), vjust = -0.3, size = 3) +
+  scale_fill_manual(
+    values = rainbow(nrow(distribution_amb_ARRAU)),
+    labels = paste(distribution_amb_ARRAU$ambiguity, distribution_amb_ARRAU$label)
+  ) +
+  labs(title = "Distribution of Ambiguity Values in ARRAU (rounded)", x = "Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(legend.title = element_blank())
+ 
+
+#PD
+ggplot(distribution_amb_PD, aes(x = ambiguity, y = percentage, fill = ambiguity)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = label), vjust = -0.3, size = 3) +
+  scale_fill_manual(
+    values = rainbow(nrow(distribution_amb_PD)),
+    labels = paste(distribution_amb_PD$ambiguity, distribution_amb_PD$label)
+  ) +
+  labs(title = "Distribution of Ambiguity Values in PD (rounded)", x = "Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(legend.title = element_blank())
+
+
+#combined
+ggplot(distribution_amb_combined, aes(x = ambiguity, y = percentage, fill = ambiguity)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = label), vjust = -0.3, size = 3) +
+  scale_fill_manual(
+    values = rainbow(nrow(distribution_amb_combined)),
+    labels = paste(distribution_amb_combined$ambiguity, distribution_amb_combined$label)
+  ) +
+  labs(title = "Distribution of Ambiguity Values in ARRAU and PD combined (rounded)", x = "Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(legend.title = element_blank(),
+        panel.border = element_rect(color = "black", fill = NA, size = 1))
+
+print(distribution_amb_combined)
+
+#table(combined_df$reference)
+```
+
+```{r, echo=FALSE, results='hide'}
+#check for NA values
+sapply(combined_df, function(x) sum(is.na(x)))
+```
+
+## Checking disagreement
+
+This section provides a small overview over the disagreement_type attribute, annotated in PD. Possible values are: 
+
+- 'ambiguity', meaning that players did not agree on an annotation, which means the markable is ambiguous
+- 'no_disagreement', meaning that players did agree with a single annotation
+- 'interface'
+- 'misunderstanding'
+
+The disagreement_type value was determined by players of a game-with-a-purpose, namely Phrase detectives (cite), thus reflecting a crowdsourced annotation of possible ambiguity of a markable. A possible 'ambiguity' value for this attribute must not be confused with the 'ambiguous' value that can be found in the ambiguity attribute, which was annotated by experts, thus reflecting a gold annotation of ambiguity.
+
+```{r disagreement_visual, echo=FALSE}
+##calculate the distribution of disagreement_type
+#ARRAU
+distribution_disagreement <- COMB_GB_WIKI_df %>%
+  count(disagreement_type) %>%
+  mutate(percentage = n / sum(n) * 100,
+         label = sprintf("%.2f%%", percentage))
+
+
+#combined
+ggplot(distribution_disagreement, aes(x = disagreement_type, y = percentage, fill = disagreement_type)) +
+  geom_bar(stat = "identity", width = 0.8) +
+  geom_text(aes(label = label), vjust = -0.3, size = 3) +
+  scale_fill_manual(
+    values = rainbow(nrow(distribution_disagreement)),
+    labels = paste(distribution_disagreement$disagreement_type, distribution_disagreement$label)
+  ) +
+  labs(title = "Distribution of disagreement_type values in PD for all Markables (rounded)", x = "Disagreement Type", y = "Percentage") +
+  theme_minimal() +
+  theme(legend.title = element_blank(),
+        panel.border = element_rect(color = "black", fill = NA, size = 1))
+
+# Print the calculated percentages
+print(distribution_disagreement)
+
+```
+
+The plot shows the distribution of unique values of the disagreement_type attribute for all PD markables.
+
+```{r echo=FALSE}
+# Filter the data frame to only include ambiguous markables
+filtered_df <- COMB_GB_WIKI_df %>%
+  filter(ambiguity == "ambiguous")
+
+# Calculate percentages for each unique value in disagreement_type within the filtered data
+disagreement_type_percentages <- filtered_df %>%
+  group_by(disagreement_type) %>%
+  summarise(count = n()) %>%
+  mutate(percent = count / sum(count) * 100)
+
+# Visualize
+ggplot(disagreement_type_percentages, aes(x = disagreement_type, y = percent, fill = disagreement_type)) +
+  geom_bar(stat = "identity") +
+  ylim(0, 100) +
+  geom_text(aes(label = round(percent, 2)), vjust = -0.5) +
+  labs(title = "Percentage of Unique Values in disagreement_type of Ambiguous Markables",
+       x = "Disagreement Type",
+       y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.border = element_rect(color = "black", fill = NA, size = 1))
+
+# Print the calculated percentages
+print(disagreement_type_percentages)
+```
+The plot shows the distribution of unique values of the disagreement_type attribute for all PD markables that are annotated as being ambiguous.
+
+In the following, an examination of the agreement of players of PD and expert annotators regarding an ambiguity of a markable will be presented. The values 'interface' and 'misunderstanding' will be ignored for now.
+
+```{r echo=FALSE, results = 'asis'}
+# condition ambiguous but no disagreement
+amb_agree <- table(COMB_GB_WIKI_df$ambiguity == "ambiguous" & COMB_GB_WIKI_df$disagreement_type == "no_disagreement")
+# condition unambiguous but disagreement
+unamb_disagree <- table(COMB_GB_WIKI_df$ambiguity == "unambiguous" & COMB_GB_WIKI_df$disagreement_type == "ambiguity")
+# condition ambiguous and disagreement
+amb_disagree <- table(COMB_GB_WIKI_df$ambiguity == "ambiguous" & COMB_GB_WIKI_df$disagreement_type == "ambiguity")
+# condition unambiguous and no disagreement
+unamb_agree <- table(COMB_GB_WIKI_df$ambiguity == "unambiguous" & COMB_GB_WIKI_df$disagreement_type == "no_disagreement")
+
+# Print the counts
+amb_agree_TRUE <- amb_agree["TRUE"]
+cat("1. Number of markables annotated as being ambiguous by experts but having no disagreement (i.e. unambiguous according to players:\n", amb_agree_TRUE)
+
+amb_disagree_TRUE <- amb_disagree["TRUE"]
+cat("\n2. Number of markables annotated as being ambiguous by experts and having disagreement (i.e. ambiguous according to players):\n", amb_disagree_TRUE)
+
+unamb_disagree_TRUE <- unamb_disagree["TRUE"]
+cat("\n3. Number of markables annotated as being unambiguous by experts but having disagreement (i.e. ambiguous according to players:\n", unamb_disagree_TRUE)
+
+unamb_agree_TRUE <- unamb_agree["TRUE"]
+cat("\n4. Number of markables annotated as being unambiguous by experts and haben no disagreement (i.e. unambiguous according to players:\n", unamb_agree_TRUE)
+```
+
+```{r barDisagreement, echo=FALSE}
+# Calculate counts for each condition
+amb_agree <- table(COMB_GB_WIKI_df$ambiguity == "ambiguous" & COMB_GB_WIKI_df$disagreement_type == "no_disagreement")
+unamb_disagree <- table(COMB_GB_WIKI_df$ambiguity == "unambiguous" & COMB_GB_WIKI_df$disagreement_type == "ambiguity")
+amb_disagree <- table(COMB_GB_WIKI_df$ambiguity == "ambiguous" & COMB_GB_WIKI_df$disagreement_type == "ambiguity")
+unamb_agree <- table(COMB_GB_WIKI_df$ambiguity == "unambiguous" & COMB_GB_WIKI_df$disagreement_type == "no_disagreement")
+
+# Extract counts
+amb_agree_TRUE <- amb_agree["TRUE"]
+amb_disagree_TRUE <- amb_disagree["TRUE"]
+unamb_disagree_TRUE <- unamb_disagree["TRUE"]
+unamb_agree_TRUE <- unamb_agree["TRUE"]
+
+# Create a data frame for visualization
+data <- data.frame(
+  condition = c("Ambiguous but no disagreement", 
+                 "Ambiguous and disagreement",
+                 "Unambiguous but disagreement",
+                 "Unambiguous and no disagreement"),
+  count = c(amb_agree_TRUE, amb_disagree_TRUE, unamb_disagree_TRUE, unamb_agree_TRUE)
+)
+
+# Create and print bar plot
+ggplot(data, aes(x = condition, y = count, fill = condition)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = count), vjust = -0.5, size = 3.5) +  # Add counts on top of the bars
+  labs(title = "Counts of Different Conditions",
+       x = "Condition",
+       y = "Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 15, hjust = 1))
+
+
+```
+
+```{r percentDisagreement, echo=FALSE}
+
+# Create a data frame for visualization
+disagreement_percent <- data.frame(
+  condition = c("Ambiguous but no disagreement", 
+                 "Ambiguous and disagreement",
+                 "Unambiguous but disagreement",
+                 "Unambiguous and no disagreement"),
+  count = c(amb_agree_TRUE, amb_disagree_TRUE, unamb_disagree_TRUE, unamb_agree_TRUE)
+)
+
+# Calculate percentage for bar plot
+disagreement_percent <- data %>%
+  mutate(percentage = count / sum(count) * 100,
+         label = sprintf("%.2f%%", percentage)) # Create label column with formatted percentages
+
+print(disagreement_percent)
+
+# Create and print bar plot
+ggplot(disagreement_percent, aes(x = condition, y = percentage, fill = condition)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = label), vjust = -0.5, size = 3.5) +  # Add counts on top of the bars
+  labs(title = "Percentage of Different Conditions (rounded)",
+       x = "Condition",
+       y = "%") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 15, hjust = 1))
+
+
+
+```
+
+The markables represented by point three are especially interesting and the unique markables will be analyzed qualitatively, since the players might have detected an ambiguity here that was either not detected by the annotators or cannot be categorised as such according to the annotation scheme. A closer look at the markables represented by point one is also at hand, which is the counterpart of point three.
+
+## Categorisation
+
+```{r}
+#filter for only those cases that are annotated as being ambiguous
+combined_df_amb <- df_sorted %>%
+  filter(ambiguity == "ambiguous")
+```
+
+```{r}
+###instantiate auxiliary columns
+#for analysis
+combined_df_amb$info_status_1 <- NA #info status of 1st reading
+combined_df_amb$info_status_2 <- NA #info status of 2nd reading
+combined_df_amb$amb_generic <- NA #ambiguity in generic value 
+combined_df_amb$amb_category <- NA #ambiguity in category value
+combined_df_amb$amb_bridging <- NA #ambiguity regarding a bridging relationship
+
+#for concatenation of the final label
+combined_df_amb$amb_reason_pre <- NA #label for ambiguity regarding info status, bridging, etc. to concatenate
+combined_df_amb$amb_reason_gen <- NA #label for ambiguity in generic value to concatinate
+combined_df_amb$amb_reason_cat <- NA #label for ambiguity in category value to concatinate
+combined_df_amb$amb_reason_fin <- NA #result of concatenating the three labels above
+```
+
+##### Fill in Auxiliary Columns
+
+```{r}
+#info_status_1
+combined_df_amb$info_status_1 <- ifelse(
+  combined_df_amb$reference == "old",
+  "DO",
+  ifelse(
+    combined_df_amb$reference == "new",
+    "DN",
+    ifelse(
+      combined_df_amb$reference == "non_referring",
+      "non_referring",
+      NA  # Assign NA for other cases
+    )
+  )
+)
+
+#info_status_2
+combined_df_amb$info_status_2 <- ifelse(
+  combined_df_amb$ref_type_2 %in% c("phrase", "segment"),
+  "DO",
+  ifelse(
+    combined_df_amb$ref_type_2 == "new",
+    "DN",
+    ifelse(
+      combined_df_amb$ref_type_2 == "non_referring",
+      "non_referring",
+      ifelse(
+        combined_df_amb$ref_type_2 == "undef_reference",
+        "undef_reference",
+        ifelse(
+          combined_df_amb$ref_type_2 == "undef_reference_2",
+          "undef_reference_2",
+          NA  # Assign NA for other cases
+        )
+      )
+    )
+  )
+)
+
+#amb_generic
+###checked: when NA was assigned for generic/generic_2 -> amb_generic = NA (51), ref_type_2 = segment (51). This means, if there is an NA in generic_2 now, "no" is assigned, since this only happens when ref_typ_2 = segment, in which case generic_2 cannot be assigned according to the scheme, thus, an ambiguity between the generic values cannot be evaluated
+combined_df_amb$amb_generic <- ifelse(
+  is.na(combined_df_amb$generic_2) | is.na(combined_df_amb$generic),
+  "no", #only when ref_type_2 = segment -> generic_2 = NA
+  ifelse(
+    combined_df_amb$generic != combined_df_amb$generic_2,
+    "yes",
+    "no"
+        )
+  )
+
+#amb_category 
+combined_df_amb$amb_category <- ifelse(
+  is.na(combined_df_amb$category) | is.na(combined_df_amb$category_2),
+  "no",
+  ifelse(
+    combined_df_amb$category != combined_df_amb$category_2,
+    "yes",
+    "no"
+        )
+  )
+
+#amb_bridging
+combined_df_amb$amb_bridging <- ifelse(
+  is.na(combined_df_amb$related_object) | is.na(combined_df_amb$related_object_2),
+  "no", 
+  ifelse(
+    xor(combined_df_amb$related_object == "yes", combined_df_amb$related_object_2 == "yes"),
+    "yes",
+    "no"
+  )
+)
+```
+
+
+```{r}
+#fill auxiliary columns for concatinating the final label
+#amb_reason_gen
+combined_df_amb$amb_reason_gen <- case_when(
+  combined_df_amb$amb_generic == "yes" ~ "generic-value",
+  combined_df_amb$amb_generic == "no" ~ "",
+  TRUE ~ "CHECK_gen" #to verify if the assignment works correctly
+)
+
+#amb_reason_cat
+combined_df_amb$amb_reason_cat <- case_when(
+  combined_df_amb$amb_category == "yes" ~ "category",
+  combined_df_amb$amb_category == "no" ~ "",
+  TRUE ~ "CHECK_cat" #to verify if the assignment works correctly
+)
+```
+
+##### Referring vs. Non-referring
+
+```{r}
+###referring vs. non-referring
+#df_non_ref
+df_non_ref <- combined_df_amb %>%
+  filter(reference == "non_referring" | ref_type_2 == "non_referring") #the content of df_non_ref is always ambiguous between referring and non_referring
+
+#assign label
+df_non_ref$amb_reason_pre <- "referring vs. non_referring" #this can be done, because of the filter above
+```
+
+##### Referring vs. Undef_reference
+
+```{r}
+###referring vs. undefined reference
+#df_ref_undef_ref
+df_ref_undef_ref <- combined_df_amb %>%
+  filter(ref_type_2 == "undef_reference" | ref_type_2 == "undef_reference_2") #when reference = non_referring or undef_reference, no annotation as ambiguous possible
+
+#assign label
+df_ref_undef_ref$amb_reason_pre <- "referring vs. undefined_reference"
+```
+
+##### Referring vs. Referring
+
+```{r}
+# filter only for referring mentions and exclude potential unmarked markables
+combined_df_ref <- combined_df_amb %>%
+  filter(!(reference %in% c("unmarked", "non_referring")) & ref_type_2 != "non_referring") 
+```
+
+##### DN vs. DN
+
+```{r}
+###DN_DN
+#categorisation using filters
+#checked count of original df (df_DN_DN) and resulting df (df_DN_DN_fin) is the same
+
+#filter for cases that are new in both readings
+df_DN_DN <- combined_df_ref %>%
+  filter(info_status_1 == "DN" & info_status_2 == "DN")
+
+#this filter is used to identify DN vs. DN cases. Later they will get assigned an amb for generic and/or category
+#all markables are amb in either generic or category or both except one -> second reading has an object_2 
+df_DN_DN_only <- df_DN_DN %>%
+  filter(related_object == "no" & related_object_2 == "no")
+#assign label
+df_DN_DN_only$amb_reason_pre <- "DN vs. DN, no related objects"
+
+#this filter is used to identify DN vs. DN+bridging cases
+df_DN_DN_a <- df_DN_DN %>%
+  filter(amb_bridging == "yes")
+#assign label
+df_DN_DN_a$amb_reason_pre <- "DN vs. DN+bridging"
+
+#this filter is used to identify cases where the right entity for bridging was not identified but the relation is the same
+df_DN_DN_b <- df_DN_DN %>%
+  filter(related_object == "yes" & related_object_2 == "yes" & related_phrase != related_phrase_2 & related_rel == related_rel_2)
+#asssign label
+df_DN_DN_b$amb_reason_pre <- "identifying the right antecedent for bridging (DN)"
+
+#this filter is used to identify cases where the right entity for bridging was not identified and the relation is not the same
+df_DN_DN_c <- df_DN_DN %>%
+  filter(related_object == "yes" & related_object_2 == "yes" & related_phrase != related_phrase_2 & related_rel != related_rel_2)
+#asssign label
+df_DN_DN_c$amb_reason_pre <- "identifying the right antecedent for bridging (DN) and ambiguous relation"
+
+#this filter is used to identify cases where the bridging relation is ambigous
+df_DN_DN_d <- df_DN_DN %>%
+  filter(related_object == "yes" & related_object_2 == "yes" & related_phrase == related_phrase_2 & related_rel != related_rel_2)
+#asssign label
+df_DN_DN_d$amb_reason_pre <- "DN vs. DN; ambiguous relation"
+
+#this filter is used for cases where neither the related phrase nor the related relation is ambiguous. However there could be cases where category or generic is amb (in fact, only one)
+df_DN_DN_e <- df_DN_DN %>%
+  filter(related_object == "yes" & related_object_2 == "yes" & related_phrase == related_phrase_2 & related_rel == related_rel_2)
+#asssign label
+df_DN_DN_e$amb_reason_pre <- "DN vs. DN"
+
+
+#recombine the dfs
+df_DN_DN_fin <- rbind(df_DN_DN_only, df_DN_DN_a, df_DN_DN_b, df_DN_DN_c, df_DN_DN_d, df_DN_DN_e)
+
+#### -----> exclusion of one observation: DN vs. DN, no related object. It is amb in on_map, which is not evaluated here.
+
+df_DN_DN_fin <- df_DN_DN_fin %>%
+  filter(!(min_ids == "word_69" & file_name == "dia6-1_phrase_level.csv" & id == "markable_17"))
+
+
+#print(df_DN_DN_fin)
+
+```
+
+##### DN vs. DO
+
+```{r}
+###DN_DO
+df_DN_DO <- combined_df_ref %>%
+  filter(info_status_1 == "DN" & info_status_2 == "DO")
+
+#this filter is used to identy cases that are DO vs. DN without further attributes; single phrase antecedent
+df_DN_DO_a <- df_DN_DO %>%
+  filter(reference == "new" & ref_type_2 == "phrase" &
+           phrase_antecedent_2 == "single_phrase" &
+           related_object == "no" & related_object_2 == "no"
+           )
+#assign label
+df_DN_DO_a$amb_reason_pre <- "DO (single) vs. DN"
+
+#this filter is used to identy cases that are DO+bridging vs. DN; single phrase antecedent --------------------------> no such cases
+# df_DN_DO_a_1 <- df_DN_DO %>%
+#   filter(reference == "new" & ref_type_2 == "phrase" &
+#            phrase_antecedent_2 == "single_phrase" &
+#            related_object == "no" & related_object_2 == "yes"
+#            )
+# #assign label
+# df_DN_DO_a_1$amb_reason_pre <- "DO+bridging (single) vs. DN"
+
+#this filter is used to identy cases that are DO vs. DN+bridging single phrase antecedent 
+df_DN_DO_a_2 <- df_DN_DO %>%
+  filter(reference == "new" & ref_type_2 == "phrase" &
+           phrase_antecedent_2 == "single_phrase" &
+           related_object == "yes" & related_object_2 == "no"
+           )
+#assign label
+df_DN_DO_a_2$amb_reason_pre <- "DO (single) vs. DN+bridging"
+
+#this filter is used to identy cases that are DO (singel) + bridging vs. DN+bridging single phrase antecedent; same relation --------------------------> no such cases
+# df_DN_DO_a_3 <- df_DN_DO %>%
+#   filter(reference == "new" & ref_type_2 == "phrase" &
+#            phrase_antecedent_2 == "single_phrase" &
+#            related_object == "yes" & related_object_2 == "yes" &
+#            related_rel == related_rel_2
+#            )
+# #assign label
+# df_DN_DO_a_3$amb_reason_pre <- "DO+bridging (single) vs. DN+bridging"
+
+#this filter is used to identy cases that are DO (singel) + bridging vs. DN+bridging single phrase antecedent; different relation --------------------------> no such cases
+# df_DN_DO_a_4 <- df_DN_DO %>%
+#   filter(reference == "new" & ref_type_2 == "phrase" &
+#            phrase_antecedent_2 == "single_phrase" &
+#            related_object == "yes" & related_object_2 == "yes" &
+#            related_rel != related_rel_2
+#            )
+# #assign label
+# df_DN_DO_a_4$amb_reason_pre <- "DO+bridging (single) vs. DN+bridging; ambiguous relation"
+
+#this filter is used to identy cases that are DO vs. DN without further attributes; multiple phrase antecedents --------------------------> no such cases
+# df_DN_DO_b <- df_DN_DO %>%
+#   filter(reference == "new" & ref_type_2 == "phrase" &
+#            phrase_antecedent_2 == "multiple_phrases" &
+#            related_object == "no" & related_object_2 == "no"
+#            )
+# #assign label
+# df_DN_DO_b$amb_reason_pre <- "DO (multiple) vs. DN"
+
+#this filter is used to identy cases that are DO+bridging vs. DN ; multiple phrase antecedents --------------------------> no such cases
+# df_DN_DO_b_1 <- df_DN_DO %>%
+#   filter(reference == "new" & ref_type_2 == "phrase" &
+#            phrase_antecedent_2 == "multiple_phrases" &
+#            related_object == "no" & related_object_2 == "yes"
+#            )
+# #assign label
+# df_DN_DO_b_1$amb_reason_pre <- "DO+bridging (multiple) vs. DN"
+
+#this filter is used to identy cases that are DO vs. DN+bridging ; multiple phrase antecedents 
+df_DN_DO_b_2 <- df_DN_DO %>%
+  filter(reference == "new" & ref_type_2 == "phrase" &
+           phrase_antecedent_2 == "multiple_phrases" &
+           related_object == "yes" & related_object_2 == "no"
+           )
+#assign label
+df_DN_DO_b_2$amb_reason_pre <- "DO (multiple) vs. DN+bridging"
+
+# #this filter is used to identy cases that are DO+bridging vs. DN+bridging ; multiple phrase antecedents, related relation is the same --------------------------> no such cases
+# df_DN_DO_b_3 <- df_DN_DO %>%
+#   filter(reference == "new" & ref_type_2 == "phrase" &
+#            phrase_antecedent == "multiple_phrases" &
+#            related_object == "yes" & related_object_2 == "yes" &
+#            related_rel == related_rel_2
+#            )
+#assign label
+# df_DN_DO_b_3$amb_reason_pre <- "DO+bridging (multiple) vs. DN+bridging"
+
+#this filter is used to identy cases that are DO+bridging vs. DN+bridging ; multiple phrase antecedents, related relation is not the same --------------------------> no such cases
+# df_DN_DO_b_4 <- df_DN_DO %>%
+#   filter(reference == "new" & ref_type_2 == "phrase" &
+#            phrase_antecedent_2 == "multiple_phrases" &
+#            related_object == "yes" & related_object_2 == "yes" &
+#            related_rel != related_rel_2
+#            )
+# #assign label
+# df_DN_DO_b_4$amb_reason_pre <- "DO+bridging (multiple) vs. DN+bridging; ambiguous related relation"
+
+#this filter is used to identy cases that are DO+deixis vs. DN without further attributes
+df_DN_DO_c <- df_DN_DO %>%
+  filter(reference == "new" & ref_type_2 == "segment" &
+           related_object == "no" & related_object_2 == "no"
+           )
+#assign label
+df_DN_DO_c$amb_reason_pre <- "deixis vs. DN"
+
+#this filter is used to identy cases that are DO+deixis+bridging vs. DN without further attributes --------------------------> no such cases
+# df_DN_DO_c_1 <- df_DN_DO %>%
+#   filter(reference == "new" & ref_type_2 == "segment" &
+#            related_object == "no" & related_object_2 == "yes"
+#            )
+# #assign label
+# df_DN_DO_c_1$amb_reason_pre <- "deixis+bridging vs. DN"
+
+#this filter is used to identy cases that are DO+deixis vs. DN+bidging without further attributes
+df_DN_DO_c_2 <- df_DN_DO %>%
+  filter(reference == "new" & ref_type_2 == "segment" &
+           related_object == "yes" & related_object_2 == "no"
+           )
+#assign label
+df_DN_DO_c_2$amb_reason_pre <- "deixis vs. DN+bridging"
+
+#this filter is used to identy cases that are DO+deixis+bridging vs. DN+bidging without further attributes --------------------------> no such cases
+# df_DN_DO_c_3 <- df_DN_DO %>%
+#   filter(reference == "new" & ref_type_2 == "segment" &
+#            related_object == "yes" & related_object_2 == "yes"
+#            )
+# #assign label
+# df_DN_DO_c_3$amb_reason_pre <- "deixis+briidging vs. DN+bridging"
+
+
+# recombine the dfs
+df_DN_DO_fin <- rbind(df_DN_DO_a, df_DN_DO_a_2, df_DN_DO_b_2, df_DN_DO_c, df_DN_DO_c_2)
+
+#print(df_DN_DO_fin)
+```
+
+##### DO vs. DN
+
+```{r}
+###DO_DN
+#checked count of original df (df_DO_DN) and resulting df (df_DO_DN_fin) is the same
+
+df_DO_DN <- combined_df_ref %>%
+  filter(info_status_1 == "DO" & info_status_2 == "DN")
+
+#this filter is used to identy cases that are DO vs. DN without further attributes; single phrase antecedent
+df_DO_DN_a <- df_DO_DN %>%
+  filter(ref_type == "phrase" & ref_type_2 == "new" &
+           phrase_antecedent == "single_phrase" &
+           related_object == "no" & related_object_2 == "no"
+           )
+#assign label
+df_DO_DN_a$amb_reason_pre <- "DO (single) vs. DN"
+
+#this filter is used to identy cases that are DO+bridging vs. DN; single phrase antecedent
+df_DO_DN_a_1 <- df_DO_DN %>%
+  filter(ref_type == "phrase" & ref_type_2 == "new" &
+           phrase_antecedent == "single_phrase" &
+           related_object == "yes" & related_object_2 == "no"
+           )
+#assign label
+df_DO_DN_a_1$amb_reason_pre <- "DO+bridging (single) vs. DN"
+
+#this filter is used to identy cases that are DO vs. DN+bridging single phrase antecedent
+df_DO_DN_a_2 <- df_DO_DN %>%
+  filter(ref_type == "phrase" & ref_type_2 == "new" &
+           phrase_antecedent == "single_phrase" &
+           related_object == "no" & related_object_2 == "yes"
+           )
+#assign label
+df_DO_DN_a_2$amb_reason_pre <- "DO (single) vs. DN+bridging"
+
+#this filter is used to identy cases that are DO (singel) + bridging vs. DN+bridging single phrase antecedent; same relation
+df_DO_DN_a_3 <- df_DO_DN %>%
+  filter(ref_type == "phrase" & ref_type_2 == "new" &
+           phrase_antecedent == "single_phrase" &
+           related_object == "yes" & related_object_2 == "yes" &
+           related_rel == related_rel_2
+           )
+#assign label
+df_DO_DN_a_3$amb_reason_pre <- "DO+bridging (single) vs. DN+bridging"
+
+#this filter is used to identy cases that are DO (singel) + bridging vs. DN+bridging single phrase antecedent; different relation
+df_DO_DN_a_4 <- df_DO_DN %>%
+  filter(ref_type == "phrase" & ref_type_2 == "new" &
+           phrase_antecedent == "single_phrase" &
+           related_object == "yes" & related_object_2 == "yes" &
+           related_rel != related_rel_2
+           )
+#assign label
+df_DO_DN_a_4$amb_reason_pre <- "DO+bridging (single) vs. DN+bridging; ambiguous relation"
+
+#this filter is used to identy cases that are DO vs. DN without further attributes; multiple phrase antecedents
+df_DO_DN_b <- df_DO_DN %>%
+  filter(ref_type == "phrase" & ref_type_2 == "new" &
+           phrase_antecedent == "multiple_phrases" &
+           related_object == "no" & related_object_2 == "no"
+           )
+#assign label
+df_DO_DN_b$amb_reason_pre <- "DO (multiple) vs. DN"
+
+#this filter is used to identy cases that are DO+bridging vs. DN ; multiple phrase antecedents --------------------------> no such cases
+# df_DO_DN_b_1 <- df_DO_DN %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "new" &
+#            phrase_antecedent == "multiple_phrases" &
+#            related_object == "yes" & related_object_2 == "no"
+#            )
+# #assign label
+# df_DO_DN_b_1$amb_reason_pre <- "DO+bridging (multiple) vs. DN"
+
+#this filter is used to identy cases that are DO vs. DN+bridging ; multiple phrase antecedents
+df_DO_DN_b_2 <- df_DO_DN %>%
+  filter(ref_type == "phrase" & ref_type_2 == "new" &
+           phrase_antecedent == "multiple_phrases" &
+           related_object == "no" & related_object_2 == "yes"
+           )
+#assign label
+df_DO_DN_b_2$amb_reason_pre <- "DO (multiple) vs. DN+bridging"
+
+# #this filter is used to identy cases that are DO+bridging vs. DN+bridging ; multiple phrase antecedents, related relation is the same --------------------------> no such cases
+# df_DO_DN_b_3 <- df_DO_DN %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "new" &
+#            phrase_antecedent == "multiple_phrases" &
+#            related_object == "yes" & related_object_2 == "yes" &
+#            related_rel == related_rel_2
+#            )
+# #assign label
+# df_DO_DN_b_3$amb_reason_pre <- "DO+bridging (multiple) vs. DN+bridging"
+
+#this filter is used to identy cases that are DO+bridging vs. DN+bridging ; multiple phrase antecedents, related relation is not the same --------------------------> no such cases
+# df_DO_DN_b_4 <- df_DO_DN %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "new" &
+#            phrase_antecedent == "multiple_phrases" &
+#            related_object == "yes" & related_object_2 == "yes" &
+#            related_rel != related_rel_2
+#            )
+# #assign label
+# df_DO_DN_b_4$amb_reason_pre <- "DO+bridging (multiple) vs. DN+bridging; ambiguous related relation"
+
+#this filter is used to identy cases that are DO+deixis vs. DN without further attributes
+df_DO_DN_c <- df_DO_DN %>%
+  filter(ref_type == "segment" & ref_type_2 == "new" &
+           related_object == "no" & related_object_2 == "no"
+           )
+#assign label
+df_DO_DN_c$amb_reason_pre <- "deixis vs. DN"
+
+#this filter is used to identy cases that are DO+deixis+bridging vs. DN without further attributes --------------------------> no such cases
+# df_DO_DN_c_1 <- df_DO_DN %>%
+#   filter(ref_type == "segment" & ref_type_2 == "new" &
+#            related_object == "yes" & related_object_2 == "no"
+#            )
+# #assign label
+# df_DO_DN_c_1$amb_reason_pre <- "deixis+bridging vs. DN"
+
+#this filter is used to identy cases that are DO+deixis vs. DN+bidging without further attributes
+df_DO_DN_c_2 <- df_DO_DN %>%
+  filter(ref_type == "segment" & ref_type_2 == "new" &
+           related_object == "no" & related_object_2 == "yes"
+           )
+#assign label
+df_DO_DN_c_2$amb_reason_pre <- "deixis vs. DN+bridging"
+
+#this filter is used to identy cases that are DO+deixis+bridging vs. DN+bidging without further attributes --------------------------> no such cases
+# df_DO_DN_c_3 <- df_DO_DN %>%
+#   filter(ref_type == "segment" & ref_type_2 == "new" &
+#            related_object == "yes" & related_object_2 == "yes"
+#            )
+# #assign label
+# df_DO_DN_c_3$amb_reason_pre <- "deixis+briidging vs. DN+bridging"
+
+
+# recombine the dfs
+
+df_DO_DN_fin <- rbind(df_DO_DN_a, df_DO_DN_a_1, df_DO_DN_a_2, df_DO_DN_a_3, df_DO_DN_a_4, df_DO_DN_b, df_DO_DN_b_2, df_DO_DN_c, df_DO_DN_c_2)
+
+#print(df_DO_DN_fin)
+
+```
+
+##### DO vs. DO
+
+```{r}
+###DO-DO
+
+df_DO_DO <- combined_df_ref %>%
+  filter(info_status_1 == "DO" & info_status_2 == "DO")
+
+# filter for identifying the right antecedent
+df_DO_DO_a <- df_DO_DO %>%
+  filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+           phrase_antecedent == "single_phrase" & phrase_antecedent_2 == "single_phrase" &
+           single_phrase_antecedent != single_phrase_antecedent_2 &
+           related_object == "no" & related_object_2 == "no" #thus, cannot have related_phrase
+           )
+#assign label
+df_DO_DO_a$amb_reason_pre <- "identifying the right antecedent" #amb_ante_deixis and amb_bridging are always "no" in df_DO_DO_a
+
+# filter for identifying the right antecedent + bridging in 1
+df_DO_DO_b <- df_DO_DO %>%
+  filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+           phrase_antecedent == "single_phrase" & phrase_antecedent_2 == "single_phrase" &
+           single_phrase_antecedent != single_phrase_antecedent_2 &
+           related_object == "yes" & related_object_2 == "no" 
+           )
+#assign label
+df_DO_DO_b$amb_reason_pre <- "identifying the right antecedent + bridging in 1" 
+
+# filter for assigning DO vs. DO; amb in generic and category added later
+df_DO_DO_b1 <- df_DO_DO %>%
+  filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+           phrase_antecedent == "single_phrase" & phrase_antecedent_2 == "single_phrase" &
+           single_phrase_antecedent == single_phrase_antecedent_2 &
+           related_object == "no" & related_object_2 == "no" 
+           )
+#assign label
+df_DO_DO_b1$amb_reason_pre <- "DO vs. DO" ### -----------------------> one observation: GB mrcnf10g word_1137; NOT ambiguous
+
+# filter for identifying the right antecedent + bridging in 2
+df_DO_DO_c <- df_DO_DO %>%
+  filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+           phrase_antecedent == "single_phrase" & phrase_antecedent_2 == "single_phrase" &
+           single_phrase_antecedent != single_phrase_antecedent_2 &
+           related_object == "no" & related_object_2 == "yes" 
+           )
+#assign label
+df_DO_DO_c$amb_reason_pre <- "identifying the right antecedent + bridging in 2" 
+
+# filter for identifying the right antecedent + bridging in both ---------------------------------------> no such cases
+# df_DO_DO_c1 <- df_DO_DO %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+#            phrase_antecedent == "single_phrase" & phrase_antecedent_2 == "single_phrase" &
+#            single_phrase_antecedent != single_phrase_antecedent_2 &
+#            related_object == "yes" & related_object_2 == "yes"
+#            )
+
+
+# filter for identifying the right antecedent for bridging ---------------------------------------> no such cases
+# df_DO_DO_c2 <- df_DO_DO %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+#            phrase_antecedent == "single_phrase" & phrase_antecedent_2 == "single_phrase" &
+#            single_phrase_antecedent == single_phrase_antecedent_2 &
+#            related_object == "yes" & related_object_2 == "yes"
+#            )
+
+
+# filter for antecedent vs. deixis
+df_DO_DO_d <- df_DO_DO %>%
+  filter(ref_type == "phrase" & ref_type_2 == "segment" &
+           related_object == "no" & related_object_2 == "no")
+#assign label
+df_DO_DO_d$amb_reason_pre <- "antecedent vs. deixis"
+
+# filter for antecedent+bridging vs. deixis ---------------------------------------> no such cases
+# df_DO_DO_d_1 <- df_DO_DO %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "segment" &
+#            related_object == "yes" & related_object_2 == "no")
+# #assign label
+# df_DO_DO_d_2$amb_reason_pre <- "antecedent+bridging vs. deixis"
+
+# filter for antecedent vs. deixis+bridging ---------------------------------------> no such cases
+# df_DO_DO_d_2 <- df_DO_DO %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "segment" &
+#            related_object == "no" & related_object_2 == "yes")
+# #assign label
+# df_DO_DO_d_2$amb_reason_pre <- "antecedent vs. deixis+bridging"
+
+# filter for antecedent+brdiging vs. deixis+bridging ---------------------------------------> no such cases
+# df_DO_DO_d_3 <- df_DO_DO %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "segment" &
+#            related_object == "no" & related_object_2 == "yes")
+# #assign label
+# df_DO_DO_d_3$amb_reason_pre <- "antecedent+bridging vs. deixis+bridging"
+
+
+# filter for antecedent vs. deixis
+df_DO_DO_e <- df_DO_DO %>%
+  filter(ref_type == "segment" & ref_type_2 == "phrase" &
+           related_object == "no" & related_object_2 == "no" 
+         )
+#assign label
+df_DO_DO_e$amb_reason_pre <- "antecedent vs. deixis" 
+
+# filter for antecedent vs. deixis+related_object
+df_DO_DO_e1 <- df_DO_DO %>%
+  filter(ref_type == "segment" & ref_type_2 == "phrase" &
+           related_object == "yes" & related_object_2 == "no" 
+         )
+#assign label
+df_DO_DO_e1$amb_reason_pre <- "antecedent vs. deixis+bridging" 
+
+# filter for antecedent+related_object vs. deixis
+df_DO_DO_e2 <- df_DO_DO %>%
+  filter(ref_type == "segment" & ref_type_2 == "phrase" &
+           related_object == "no" & related_object_2 == "yes" 
+         )
+#assign label
+df_DO_DO_e2$amb_reason_pre <- "antecedent+bridging vs. deixis"
+
+# filter for antecedent+related_object vs. deixis+related object ----------------------------------------> no such cases
+# df_DO_DO_e3 <- df_DO_DO %>%
+#   filter(ref_type == "segment" & ref_type_2 == "phrase" &
+#            related_object == "yes" & related_object_2 == "yes" 
+#          )
+# #assign label
+# df_DO_DO_e3$amb_reason_pre <- "antecedent+related_object vs. deixis"+related object
+
+# filter for amb in deixis antecedent
+df_DO_DO_f <- df_DO_DO %>%
+  filter(ref_type == "segment" & ref_type_2 == "segment" &
+           segment_antecedent != segment_antecedent_2 &
+           related_object == "no" & related_object_2 == "no" 
+         )
+#assign label
+df_DO_DO_f$amb_reason_pre <- "identifying the right segment for deixis"
+
+# filter for amb in deixis antecedent + related object in 1
+df_DO_DO_f1 <- df_DO_DO %>%
+  filter(ref_type == "segment" & ref_type_2 == "segment" &
+           segment_antecedent != segment_antecedent_2 &
+           related_object == "yes" & related_object_2 == "no" 
+         )
+
+df_DO_DO_f1$amb_reason_pre <- "identifying the right segment for deixis + related_object in 1"
+
+# filter for amb in deixis antecedent + related object in 2  ----------------------------------------> no such cases
+# df_DO_DO_f2 <- df_DO_DO %>%
+#   filter(ref_type == "segment" & ref_type_2 == "segment" &
+#            segment_antecedent != segment_antecedent_2 &
+#            related_object == "no" & related_object_2 == "yes" 
+#          )
+#assign label
+# df_DO_DO_f2$amb_reason_pre <- "identifying the right segment for deixis + related_object in 2"
+
+# filter for amb in deixis antecedent + related object in both ---------------------------------------> no such cases
+# df_DO_DO_f3 <- df_DO_DO %>%
+#   filter(ref_type == "segment" & ref_type_2 == "segment" &
+#            segment_antecedent != segment_antecedent_2 &
+#            related_object == "yes" & related_object_2 == "yes" 
+#          )
+# #assign label
+# df_DO_DO_f3$amb_reason_pre <- "identifying the right segment for deixis + related_object in both"
+
+# filter for single vs. multiple antecedents
+df_DO_DO_g <- df_DO_DO %>%
+  filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+           phrase_antecedent == "multiple_phrases" & phrase_antecedent_2 == "single_phrase" &
+           related_object == "no" & related_object_2 == "no"
+           )
+#assign label
+df_DO_DO_g$amb_reason_pre <- "single vs. multiple antecedents"
+
+# filter for single vs. multiple antecedents
+df_DO_DO_g4 <- df_DO_DO %>%
+  filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+           phrase_antecedent == "single_phrase" & phrase_antecedent_2 == "multiple_phrases" &
+           related_object == "no" & related_object_2 == "no"
+           )
+#assign label
+df_DO_DO_g4$amb_reason_pre <- "single vs. multiple antecedents"
+
+# filter for single vs. multiple antecedents and related object in 1 ---------------------------------------> no such cases
+# df_DO_DO_g1 <- df_DO_DO %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+#            phrase_antecedent == "multiple_phrases" & phrase_antecedent_2 == "single_phrase" &
+#            related_object == "yes" & related_object_2 == "no"
+#            )
+# #assign label
+# df_DO_DO_g1$amb_reason_pre <- "single vs. multiple antecedents and related object in 1"
+
+# filter for single vs. multiple antecedents and related object in 2 ---------------------------------------> no such cases
+# df_DO_DO_g2 <- df_DO_DO %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+#            phrase_antecedent == "multiple_phrases" & phrase_antecedent_2 == "single_phrase" &
+#            related_object == "no" & related_object_2 == "yes"
+#            )
+# #assign label
+# df_DO_DO_g2$amb_reason_pre <- "single vs. multiple antecedents and related object in 2"
+
+# filter for single vs. multiple antecedents and related object in both ---------------------------------------> no such cases
+# df_DO_DO_g3 <- df_DO_DO %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+#            phrase_antecedent == "multiple_phrases" & phrase_antecedent_2 == "single_phrase" &
+#            related_object == "yes" & related_object_2 == "yes"
+#            )
+# #assign label
+# df_DO_DO_g3$amb_reason_pre <- "single vs. multiple antecedents and related object in both"
+
+# filter for identifying the right antecedents
+df_DO_DO_h <- df_DO_DO %>%
+  filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+           phrase_antecedent == "multiple_phrases" & phrase_antecedent_2 == "multiple_phrases" &
+           multiple_phrase_antecedents != multiple_phrase_antecedents_2 &
+           related_object == "no" & related_object_2 == "no"
+           )
+#assign label
+df_DO_DO_h$amb_reason_pre <- "identifying the right antecedents"
+
+# filter for identifying the right antecedents + related_object in 1 ---------------------------------------> no such cases
+# df_DO_DO_h1 <- df_DO_DO %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+#            phrase_antecedent == "multiple_phrases" & phrase_antecedent_2 == "multiple_phrases" &
+#            multiple_phrase_antecedents != multiple_phrase_antecedents_2 &
+#            related_object == "yes" & related_object_2 == "no"
+#            )
+# #assign label
+# df_DO_DO_h1$amb_reason_pre <- "identifying the right antecedents + related_object in 1"
+
+# filter for identifying the right antecedents + related_object in 2 ---------------------------------------> no such cases
+# df_DO_DO_h2 <- df_DO_DO %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+#            phrase_antecedent == "multiple_phrases" & phrase_antecedent_2 == "multiple_phrases" &
+#            multiple_phrase_antecedents != multiple_phrase_antecedents_2 &
+#            related_object == "no" & related_object_2 == "yes"
+#            )
+# #assign label
+# df_DO_DO_h2$amb_reason_pre <- "identifying the right antecedents + related_object in 2"
+
+# filter for identifying the right antecedents + related_object in both ---------------------------------------> no such cases
+# df_DO_DO_h3 <- df_DO_DO %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+#            phrase_antecedent == "multiple_phrases" & phrase_antecedent_2 == "multiple_phrases" &
+#            multiple_phrase_antecedents == multiple_phrase_antecedents_2 &
+#            related_object == "yes" & related_object_2 == "yes"
+#            )
+# #assign label
+# df_DO_DO_h3$amb_reason_pre <- "identifying the right antecedents + related_object in both"
+
+
+### combinig the dfs; df_DO_DO_b1 is not included, since one observation that is NOT ambiguous DO vs. DO
+df_DO_DO_fin <- rbind(df_DO_DO_a, df_DO_DO_b, df_DO_DO_c, df_DO_DO_d, df_DO_DO_e, df_DO_DO_e1, df_DO_DO_e2, df_DO_DO_f, df_DO_DO_f1, df_DO_DO_g, df_DO_DO_g4, df_DO_DO_h)
+```
+
+##### Recombine all Data Frames that Contain Referring Markables
+
+```{r}
+#recombine the categorised dfs of referring markables
+df_categorised_referring <- rbind(df_DN_DN_fin, df_DO_DO_fin, df_DO_DN_fin, df_DN_DO_fin, df_ref_undef_ref)
+
+#print(df_categorised_referring)
+```
+
+##### Recombine all categorised Data Frames
+
+```{r}
+#recombine data frames
+df_categorised_1 <- rbind(df_categorised_referring, df_non_ref)
+
+#print(df_categorised_1)
+```
+
+##### Checking Double Appearing Markables
+
+```{r}
+#check if a markable does not appear twice or more in the df
+double_markables <- df_categorised_1 %>%
+  group_by(file_name) %>% # group by the file the markable appears in
+  filter(duplicated(id) | duplicated(id, fromLast = TRUE)) # use function to check for duplicate ids
+
+print(double_markables) #if this data frame is empty, there are no markables that appear twice in the original df
+```
+
+##### Ambiguity in Generic and/or Category
+
+```{r}
+#create final data frame
+df_categorised_fin <- df_categorised_1
+
+#get rid of the superfluous semicolons 
+concatenate_with_condition <- function(row, columns, separator = "; ", include_empty = FALSE) {
+  selected_row <- row[columns]
+  
+  if (!include_empty) {
+    selected_row <- selected_row[selected_row != ""]
+  }
+  
+  result <- paste(selected_row, collapse = separator)
+  return(result)
+}
+
+#specify columns to use
+columns_to_use <- c("amb_reason_pre", "amb_reason_gen", "amb_reason_cat")
+
+#concatenate and put in amb_reason_fin
+df_categorised_fin$amb_reason_fin <- apply(df_categorised_fin[, columns_to_use], 1, concatenate_with_condition, 
+                     columns = columns_to_use, separator = "; ", include_empty = FALSE)
+
+```
+
+#### Full List of Labels and Count
+
+```{r, echo=FALSE}
+print("List of labels and their count in ARRAU and PD:")
+table(df_categorised_fin$amb_reason_fin)
+
+#print(df_categorised_fin)
+#print(combined_df_amb)
+```
+
+## Visualisations
+
+#### Complete data set (ARRAU + PD)
+
+```{r echo=FALSE}
+# Calculate the distribution
+distribution_fin <- df_categorised_fin %>%
+  count(amb_reason_fin) %>%
+  mutate(percentage = n / sum(n) * 100)
+
+print(distribution_fin)
+
+# Split the data for better visualization
+high_percentage_fin <- distribution_fin %>% filter(percentage >= 3)
+medium_percentage_fin <- distribution_fin %>% filter(percentage >= 1 & percentage < 3)
+low_percentage_fin <- distribution_fin %>% filter(percentage < 1 & percentage > 0.08)
+very_low_percentage_fin <- distribution_fin %>% filter(percentage < 0.08)
+
+# Plot high percentage categories
+ggplot(high_percentage_fin, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  geom_text(aes(label = sprintf("%.1f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (≥ 1%)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Plot medium percentage categories
+ggplot(medium_percentage_fin, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  geom_text(aes(label = sprintf("%.1f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (≥ 1%)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Plot low percentage categories
+ggplot(low_percentage_fin, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "lightcoral") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (< 1%)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Plot low percentage categories
+ggplot(very_low_percentage_fin, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "lightcoral") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (< 1%)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+print(medium_percentage_fin)
+```
+
+The plots show the distribution of reasons for ambiguity in percent for all markables annotated as being ambiguous in PD and ARRAU.
+
+```{r echo=FALSE}
+# Calculate the distribution
+distribution_fin_2 <- df_categorised_fin %>%
+  count(amb_reason_fin) %>%
+  mutate(percentage = n / sum(n) * 100)
+
+# Print the distribution
+print(distribution_fin_2)
+
+# Aggregate small values into "Other" if needed (optional)
+threshold <- 0.5
+distribution_fin_2 <- distribution_fin_2 %>%
+  mutate(amb_reason_fin = ifelse(percentage < threshold, "Other", amb_reason_fin)) %>%
+  group_by(amb_reason_fin) %>%
+  summarise(n = sum(n), percentage = sum(percentage)) %>%
+  ungroup()
+
+# Visualize the distribution
+ggplot(distribution_fin_2, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  geom_text(aes(label = ifelse(percentage >= 0.06, sprintf("%.1f%%", percentage), sprintf("%.3f%%", percentage))), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity", x = "amb_reason_fin", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+The plot shows the distribution of assigned labels for the reason of ambiguity with percentages smaller than 0.5% confflated into the category "other".
+
+#### Visualizations of individual data sets
+
+```{r}
+# split data for evaluation of different corpora and their domains
+
+#RST domain
+df_categorised_RST <- df_categorised_fin %>%
+  filter(dataset == "RST")
+#Trains domain
+df_categorised_Trains <- df_categorised_fin %>%
+  filter(dataset == "Trains_91")
+#ARRAU
+df_categorised_ARRAU <- rbind(df_categorised_RST, df_categorised_Trains)
+#Gutenberg domain
+df_categorised_gutenberg <- df_categorised_fin %>%
+  filter(dataset == "GB")
+#Wikipedia domain
+df_categorised_wiki <- df_categorised_fin %>%
+  filter(dataset == "Wiki")
+#PD corpus
+df_categorised_PD <- rbind(df_categorised_gutenberg, df_categorised_wiki)
+```
+
+#### RST
+
+```{r echo=FALSE}
+##RST
+# Calculate the distribution
+distribution_RST <- df_categorised_RST %>%
+  count(amb_reason_fin) %>%
+  mutate(percentage = n / sum(n) * 100,
+         dataset = "RST")
+
+print(distribution_RST)
+
+# Split the data for better visualization
+high_percentage_RST <- distribution_RST %>% filter(percentage >= 3)
+medium_percentage_RST <- distribution_RST %>% filter(percentage >= 1 & percentage < 3)
+low_percentage_RST <- distribution_RST %>% filter(percentage >= 0.08 & percentage < 1)  # Changed to match description
+very_low_percentage_RST <- distribution_RST %>% filter(percentage < 0.08)
+
+# Plot high percentage categories
+ggplot(high_percentage_RST, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (≥ 3%) in RST (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Plot medium percentage categories
+ggplot(medium_percentage_RST, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (1% to < 3%) in RST (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Plot low percentage categories
+ggplot(low_percentage_RST, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "lightcoral") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (≥ 0.08% to < 1%) in RST (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Plot very low percentage categories
+ggplot(very_low_percentage_RST, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "lightcoral") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (< 0.08%) in RST (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.border = element_rect(color = "black", fill = NA, size = 1))
+
+```
+
+#### Trains
+
+```{r echo=FALSE}
+###Trains
+# Calculate the distribution
+distribution_Trains <- df_categorised_Trains %>%
+  count(amb_reason_fin) %>%
+  mutate(percentage = n / sum(n) * 100,
+         dataset = "Trains")
+
+print(distribution_Trains)
+
+# Split the data for better visualization
+high_percentage_Trains <- distribution_Trains %>% filter(percentage >= 3)
+medium_percentage_Trains <- distribution_Trains %>% filter(percentage >= 1 & percentage < 3)
+low_percentage_Trains <- distribution_Trains %>% filter(percentage >= 0.08 & percentage < 1)  # Changed to match description
+very_low_percentage_Trains <- distribution_Trains %>% filter(percentage < 0.08)
+
+# Plot high percentage categories
+ggplot(high_percentage_Trains, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (≥ 3%) in Trains (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.border = element_rect(color = "black", fill = NA, size = 1))
+
+# Plot medium percentage categories
+ggplot(medium_percentage_Trains, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (1% to < 3%) in Trains (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.border = element_rect(color = "black", fill = NA, size = 1))
+
+# Plot low percentage categories
+ggplot(low_percentage_Trains, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "lightcoral") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (≥ 0.08% to < 1%) in Trains (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.border = element_rect(color = "black", fill = NA, size = 1))
+
+# Plot very low percentage categories
+ggplot(very_low_percentage_Trains, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "lightcoral") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (< 0.08%) in Trains (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+#### Comparison RST and Trains
+
+```{r echo=FALSE}
+# Combine the distributions and filter
+combined_distribution_RST_Trains <- bind_rows(distribution_RST, distribution_Trains) %>%
+  filter(percentage > 0.8)
+#plot
+ggplot(combined_distribution_RST_Trains, aes(x = reorder(amb_reason_fin, -percentage), y = percentage, fill = dataset)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  geom_text(aes(label = sprintf("%.1f%%", percentage)), 
+            position = position_dodge(width = 0.8), 
+            vjust = 0, 
+            size = 2) +
+  labs(title = "Comparison of Ambiguity Reasons between RST and Trains Domains (>=0.8)", 
+       x = "Reason for Ambiguity", 
+       y = "Percentage", 
+       fill = "Dataset") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), 
+        legend.position = "top",
+        plot.title = element_text(size = 12))  # Add border around plot
+
+```
+The plot compares the distribution of reasons for ambiguity between the two domains of ARRAU. If only one bar is shown per label, the percentage of it in the other domain is below the threshold of 0.8%
+
+#### ARRAU
+
+```{r echo=FALSE}
+###ARRAU
+# Calculate the distribution
+distribution_ARRAU <- df_categorised_ARRAU %>%
+  count(amb_reason_fin) %>%
+  mutate(percentage = n / sum(n) * 100)
+
+print(distribution_ARRAU)
+
+# Split the data for better visualization
+high_percentage_ARRAU <- distribution_ARRAU %>% filter(percentage >= 3)
+medium_percentage_ARRAU <- distribution_ARRAU %>% filter(percentage >= 1 & percentage < 3)
+low_percentage_ARRAU <- distribution_ARRAU %>% filter(percentage >= 0.08 & percentage < 1)  # Changed to match description
+very_low_percentage_ARRAU <- distribution_ARRAU %>% filter(percentage < 0.08)
+
+# Plot high percentage categories
+ggplot(high_percentage_ARRAU, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (≥ 3%) in ARRAU (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Plot medium percentage categories
+ggplot(medium_percentage_ARRAU, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (1% to < 3%) in ARRAU (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Plot low percentage categories
+ggplot(low_percentage_ARRAU, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "lightcoral") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (≥ 0.08% to < 1%) in ARRAU (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Plot very low percentage categories
+ggplot(very_low_percentage_ARRAU, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "lightcoral") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (< 0.08%) in ARRAU (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+#### Gutenberg
+
+```{r echo=FALSE}
+##RST
+# Calculate the distribution
+distribution_gutenberg <- df_categorised_gutenberg %>%
+  count(amb_reason_fin) %>%
+  mutate(percentage = n / sum(n) * 100,
+         dataset = "Gutenberg")
+
+print(distribution_gutenberg)
+
+# Split the data for better visualization
+high_percentage_gutenberg <- distribution_gutenberg %>% filter(percentage >= 3)
+medium_percentage_gutenberg <- distribution_gutenberg %>% filter(percentage >= 1 & percentage < 3)
+low_percentage_gutenberg <- distribution_gutenberg %>% filter(percentage >= 0.08 & percentage < 1)  # Changed to match description
+very_low_percentage_gutenberg <- distribution_gutenberg %>% filter(percentage < 0.08)
+
+# Plot high percentage categories
+ggplot(high_percentage_gutenberg, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (≥ 3%) in Gutenberg (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Plot medium percentage categories
+ggplot(medium_percentage_gutenberg, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (1% to < 3%) in Gutenberg (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Plot low percentage categories
+ggplot(low_percentage_gutenberg, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "lightcoral") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (≥ 0.08% to < 1%) in Gutenberg (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Plot very low percentage categories
+ggplot(very_low_percentage_gutenberg, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "lightcoral") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (< 0.08%) in Gutenberg (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.border = element_rect(color = "black", fill = NA, size = 1))
+
+```
+
+#### Wikipedia
+
+```{r echo=FALSE}
+##RST
+# Calculate the distribution
+distribution_wiki <- df_categorised_wiki %>%
+  count(amb_reason_fin) %>%
+  mutate(percentage = n / sum(n) * 100,
+         dataset = "Wikipedia")
+
+print(distribution_wiki)
+
+# Split the data for better visualization
+high_percentage_wiki <- distribution_wiki %>% filter(percentage >= 3)
+medium_percentage_wiki <- distribution_wiki %>% filter(percentage >= 1 & percentage < 3)
+low_percentage_wiki <- distribution_wiki %>% filter(percentage >= 0.08 & percentage < 1)  # Changed to match description
+very_low_percentage_wiki <- distribution_wiki %>% filter(percentage < 0.08)
+
+# Plot high percentage categories
+ggplot(high_percentage_wiki, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (≥ 3%) in Wikipedia (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Plot medium percentage categories
+ggplot(medium_percentage_wiki, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (1% to < 3%) in Wikipedia (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Plot low percentage categories
+ggplot(low_percentage_wiki, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "lightcoral") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (≥ 0.08% to < 1%) in Wikipedia (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Plot very low percentage categories
+ggplot(very_low_percentage_wiki, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "lightcoral") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (< 0.08%) in Wikipedia (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.border = element_rect(color = "black", fill = NA, size = 1))
+
+```
+#### Comparison Gutenberg and Wikipedia
+
+```{r echo=FALSE}
+# Combine the distributions
+combined_distribution_GB_wiki <- bind_rows(distribution_gutenberg, distribution_wiki) %>%
+  filter(percentage > 0.8)
+#plot
+ggplot(combined_distribution_GB_wiki, aes(x = reorder(amb_reason_fin, -percentage), y = percentage, fill = dataset)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  geom_text(aes(label = sprintf("%.1f%%", percentage)), 
+            position = position_dodge(width = 0.8), 
+            vjust = 0, 
+            size = 2) +
+  labs(title = "Comparison of Ambiguity Reasons between Gutenberg and Wikipedia Domains (>=0.8)", 
+       x = "Reason for Ambiguity", 
+       y = "Percentage", 
+       fill = "Dataset") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), 
+        legend.position = "top",
+        plot.title = element_text(size = 12))  # Add border around plot
+
+```
+
+The plot compares the distribution of reasons for ambiguity between the two domains of PD. If only one bar is shown per label, the percentage of it in the other domain is below the threshold of 0.8%
+
+#### Phrase Detectives
+
+```{r echo=FALSE}
+###Phrase Detectives
+# Calculate the distribution
+distribution_PD <- df_categorised_PD %>%
+  count(amb_reason_fin) %>%
+  mutate(percentage = n / sum(n) * 100)
+
+print(distribution_PD)
+
+# Split the data for better visualization
+high_percentage_PD <- distribution_PD %>% filter(percentage >= 3)
+medium_percentage_PD <- distribution_PD %>% filter(percentage >= 1 & percentage < 3)
+low_percentage_PD <- distribution_PD %>% filter(percentage >= 0.08 & percentage < 1)  # Changed to match description
+very_low_percentage_PD <- distribution_PD %>% filter(percentage < 0.08)
+
+# Plot high percentage categories
+ggplot(high_percentage_PD, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (≥ 3%) in ARRAU (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Plot medium percentage categories
+ggplot(medium_percentage_PD, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (1% to < 3%) in ARRAU (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Plot low percentage categories
+ggplot(low_percentage_PD, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "lightcoral") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (≥ 0.08% to < 1%) in ARRAU (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Plot very low percentage categories
+ggplot(very_low_percentage_PD, aes(x = reorder(amb_reason_fin, -percentage), y = percentage)) +
+  geom_bar(stat = "identity", fill = "lightcoral") +
+  geom_text(aes(label = sprintf("%.2f%%", percentage)), vjust = -0.5, size = 2) +
+  labs(title = "Distribution of Reasons for Ambiguity (< 0.08%) in ARRAU (rounded)", x = "Reason for Ambiguity", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+
+
+#### Pronouns
+
+```{r}
+# define pronouns (personal, possessive)
+pronouns <- "\\b(i|you|he|she|it|we|they|me|him|her|us|them|my|your|his|its|our|their|mine|yours|hers|ours|theirs)\\b"
+
+reflexives <- "\\b(myself|yourself|himself|herself|itself|ourselves|yourselves|themselves)\\b"
+
+# filter
+df_categorised_pronouns <- df_categorised_fin %>%
+  filter(grepl(pronouns, min_words, ignore.case = TRUE))
+
+#df_categorised_reflexive <- df_categorised_fin %>%
+  #filter(grepl(reflexives, min_words, ignore.case = TRUE))
+
+# filter for everything that is NOT a pronoun
+df_categorised_not_pronouns <- df_categorised_fin %>%
+  filter(!grepl(pronouns, reflexives, min_words, ignore.case = TRUE))
+
+#print(df_categorised_pronouns)
+
+print("List of labels and their count in ARRAU + PD for pronouns:")
+table(df_categorised_pronouns$amb_reason_fin)
+#table(df_categorised_pronouns$gram_fnc)
+#table(df_categorised_pronouns$number)
+
+
+```
+```{r, echo=FALSE} 
+# look up pronouns 
+test1 <- df_categorised_pronouns %>%
+  filter(grepl("identifying the right antecedents", amb_reason_fin, ignore.case = TRUE))
+
+print(test1)
+```
+
+
+```{r, echo=FALSE}
+# Calculate the distribution
+distribution_pronoun <- df_categorised_pronouns %>%
+  count(amb_reason_fin) %>%
+  mutate(percentage = n / sum(n) * 100,
+         NPs = "Pronouns")
+
+distribution_not_pronoun <- df_categorised_not_pronouns %>%
+  count(amb_reason_fin) %>%
+  mutate(percentage = n / sum(n) * 100,
+         NPs = "Other")
+
+# Combine the distributions
+combined_distribution_allNP <- bind_rows(distribution_pronoun, distribution_not_pronoun) %>%
+  filter(percentage > 0.8)
+#plot
+ggplot(combined_distribution_allNP, aes(x = reorder(amb_reason_fin, -percentage), y = percentage, fill = NPs
+                                        )) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  geom_text(aes(label = sprintf("%.1f%%", percentage)), 
+            position = position_dodge(width = 0.8), 
+            vjust = 0, 
+            size = 2) +
+  labs(title = "Comparison of Ambiguity Reasons between Pronouns and other NPs (>=0.8)", 
+       x = "Reason for Ambiguity", 
+       y = "Percentage", 
+       fill = "NPs") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), 
+        legend.position = "top",
+        plot.title = element_text(size = 12))  # Add border around plot
+
+```
+
+#### Other pronouns vs. it
+
+```{r, echo=FALSE}
+df_categorised_it <- df_categorised_pronouns %>%
+  filter(grepl("\\bit\\b", min_words, ignore.case = TRUE))
+
+df_categorised_not_it <- df_categorised_pronouns %>%
+  filter(!grepl("\\bit\\b", min_words, ignore.case = TRUE))
+
+# Calculate the distribution
+distribution_it <- df_categorised_it %>%
+  count(amb_reason_fin) %>%
+  mutate(percentage = n / sum(n) * 100,
+        Pronoun = "it")
+
+distribution_not_it <- df_categorised_not_it %>%
+  count(amb_reason_fin) %>%
+  mutate(percentage = n / sum(n) * 100,
+         Pronoun = "Other")
+
+print(distribution_it)
+print(distribution_not_it)
+
+# Combine the distributions
+combined_distribution_it <- bind_rows(distribution_it, distribution_not_it) %>%
+  filter(percentage > 0.8)
+#plot
+ggplot(combined_distribution_it, aes(x = reorder(amb_reason_fin, -percentage), y = percentage, fill = Pronoun
+                                        )) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  geom_text(aes(label = sprintf("%.1f%%", percentage)), 
+            position = position_dodge(width = 0.8), 
+            vjust = 0, 
+            size = 2) +
+  labs(title = "Comparison of Ambiguity Reasons between 'it' and other Pronouns (>=0.8)", 
+       x = "Reason for Ambiguity", 
+       y = "Percentage", 
+       fill = "Pronoun:") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), 
+        legend.position = "top",
+        plot.title = element_text(size = 12))  # Add border around plot
+```
+
+```{r}
+#plural pronouns ------------------> to be done!!
+
+#check how plural pronouns are annotated for "phrase antecedent"
+```
+
+
+## Unique and rare labels
+
+List of unique labels:
+
+```{r echo=FALSE}
+unique_labels <- df_categorised_fin %>%
+  count(amb_reason_fin) %>%
+  filter(n == 1)
+
+print(unique_labels)
+```
+
+List of rare labels (n > 1 & n <= 5):
+
+```{r echo=FALSE}
+rare_labels <- df_categorised_fin %>%
+  count(amb_reason_fin) %>%
+  filter(n > 1 & n <= 5)
+
+print(rare_labels)
+```

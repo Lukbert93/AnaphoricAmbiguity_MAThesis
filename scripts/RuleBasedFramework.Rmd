@@ -1,0 +1,992 @@
+---
+title: "Ambiguity and Anaphora - An Analysis of Disagreement in Anaphoric Annotation"
+author: "Lukas Beiske"
+date: "29 10 2024"
+output: html_document
+---
+
+## Libraries
+
+```{r message = FALSE, echo=TRUE, warning=FALSE, results="hide"}
+library(xml2)
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(knitr)
+library(stringr)
+library(tidyr)
+library(kableExtra)
+library(grid)
+library(gridExtra)
+```
+
+## Data Treatment
+
+Since information about markables is stored in XML files, these are first converted into CSV format for better handling. The following code is a function that is responsible for this conversion. It loads an XML file, takes care of the XML namespaces, and then extracts the information of the individual markables. A for-loop makes it possible to repeat this process for all XML files in the folder. The output is stored in a separate folder called 'output_csv' within the input folder and consists of one CSV file per XML input file.
+
+```{r xml to csv, message = FALSE, echo=TRUE, warning=FALSE}
+#define the function; argument = individual XML files instantiated below
+xml_to_csv <- function(xml_ind, output_f) {
+  #read the file via read_xml (xml2)
+  xml_data <- read_xml(xml_ind)
+  #strip default namespaces via xml_ns_stripfrom document (xml2)
+  xml_data <- xml_ns_strip(xml_data)
+  #data extraction
+  xml_data %>%
+    #retrieve all attributes values as a named character vector, bind rows and create csv-file (name derived from original XML file)
+    xml_find_all("markable") %>% 
+    xml_attrs() %>%
+    bind_rows() %>%
+    write_csv(file = file.path(output_f, paste0(sub(".xml", ".csv", basename(xml_ind)))))
+}
+
+#path to input folders with XML files
+folders_xml <- c("../Statistics/data/ARRAU/RST",
+                 "../Statistics/data/ARRAU/Trains_91",
+                 "../Statistics/data/PD/gutenberg",
+                 "../Statistics/data/PD/wiki")
+
+#for-loop for iterating through input folders
+for (input_f in folders_xml) {
+  #create a list of contained XML files
+  all_xml_ind <- list.files(path = input_f, pattern = "\\.xml$", full.names = TRUE)
+  #create output folders
+  output_f <- file.path(input_f, "output_csv")
+  dir.create(output_f, showWarnings = FALSE)
+  
+  for (xml_ind in all_xml_ind) {
+    xml_to_csv(xml_ind, output_f)
+  }
+}
+```
+
+### Create a DF for ARRAU data
+
+The following code creates data frames from the data of the ARRAU corpus.
+
+```{r message=FALSE, results='hide'}
+
+#define function
+create_df <- function(path_f, name_ds) {
+  #create a list with all CSV files
+  csv_list <- list.files(path_f, pattern = "\\.csv$", full.names = TRUE)
+  #create empty data frame 
+  dataset <- data.frame()
+  #for-loop to iterate through the CSV files and extract the data
+  for (csv_ind in csv_list) {
+    csv_data <- read_csv(csv_ind)
+    #add the extra columns for data-set and file name
+    csv_data$dataset <- name_ds
+    csv_data$file_name <- basename(csv_ind)
+    #combine the data of the individual files
+    dataset <- bind_rows(dataset, csv_data)
+  }
+  return(dataset)
+}
+
+#define the paths to the folders containinng the CSV files
+RST_path <- "../Statistics/data/ARRAU/RST/output_csv"
+TRAINS91_path <- "../Statistics/data/ARRAU/Trains_91/output_csv"
+
+#apply function to the CSV files of the RST domain; create df
+RST_df <- create_df(RST_path, "RST")
+
+#apply function to the CSV files of the TRAINS domain; create df
+TRAINS91_df <- create_df(TRAINS91_path, "Trains_91")
+
+#combine the RST_df and TRAINS91_df data frames
+COMB_RST_TRAINS_df <- bind_rows(RST_df, TRAINS91_df)
+
+```
+
+### Create a DF for Phrase Detectives (PD) data
+
+The following code creates data frames from the data of the PD corpus.
+
+```{r message=FALSE, results='hide'}
+
+#define function
+create_df <- function(path_f, name_ds) {
+  #create a list with all CSV files
+  csv_list <- list.files(path_f, pattern = "\\.csv$", full.names = TRUE)
+  #create empty data frame 
+  dataset <- data.frame()
+  #for-loop to iterate through the CSV files and extract the data
+  for (csv_ind in csv_list) {
+    csv_data <- read_csv(csv_ind)
+    #add the extra columns for data-set and file name
+    csv_data$dataset <- name_ds
+    csv_data$file_name <- basename(csv_ind)
+    #combine the data of the individual files
+    dataset <- bind_rows(dataset, csv_data)
+  }
+  return(dataset)
+}
+
+#define the paths to the folders containinng the CSV files
+GB_path <- "../Statistics/data/PD/gutenberg/output_csv"
+WIKI_path <- "../Statistics/data/PD/wiki/output_csv"
+
+#apply function to the CSV files of the gutenberg domain; create df
+GB_df <- create_df(GB_path, "GB")
+
+#apply function to the CSV files of the wikipedia domain; create df
+WIKI_df <- create_df(WIKI_path, "Wiki")
+
+#combine the RST_df and TRAINS91_df data frames
+COMB_GB_WIKI_df <- bind_rows(GB_df, WIKI_df)
+
+```
+
+```{r}
+## combine ARRAU and PD data; removal of columns so that both observe the same
+
+# Remove 'disagreement_type' column from COMB_GB_WIKI_df; new df called CGW
+CGW <- COMB_GB_WIKI_df[, -which(names(COMB_GB_WIKI_df) == "disagreement_type"), drop = FALSE]
+
+# Remove multiple columns from COMB_RST_TRAINS_df; new df is called CRT
+CRT <- COMB_RST_TRAINS_df[, -which(names(COMB_RST_TRAINS_df) %in% c("on_map", "on_map_2", "objectadditional")), drop = FALSE]
+
+# Combine CRT and CGW in a new df called combined_df
+combined_df <- rbind(CRT, CGW)#FOR FURTHER ANALYSIS
+
+##sortcolumns
+#general information in fixed order
+general_info <- c("min_words", "min_ids", "id", "file_name", "span", "mmax_level", "dataset", "comment")
+
+#further (gramm.) information in fixed order
+info_gramm <- c("number", "gender", "person", "gram_fnc", "ambiguity")
+
+#annotated information sorted alphabetically
+all_columns <- names(combined_df)
+anno_info <- setdiff(all_columns, c(general_info, info_gramm))  # Find remaining columns
+anno_info_sorted <- sort(anno_info)  # Sort alphabetically
+
+# Reorder DataFrame by combining these three groups
+df_sorted <- combined_df[, c(general_info, info_gramm, anno_info_sorted)]
+
+# Make all character via list, then put it back in a data frame
+df_sorted <- lapply(df_sorted, as.character)
+
+df_sorted <- as.data.frame(df_sorted)
+
+# View the reordered DataFrame
+#print(df_sorted)
+```
+
+
+## Categorisation
+
+```{r}
+#filter for only those cases that are annotated as being ambiguous
+combined_df_amb <- df_sorted %>%
+  filter(ambiguity == "ambiguous")
+```
+
+```{r}
+###instantiate auxiliary columns
+#for analysis
+combined_df_amb$info_status_1 <- NA #info status of 1st reading
+combined_df_amb$info_status_2 <- NA #info status of 2nd reading
+combined_df_amb$amb_generic <- NA #ambiguity in generic value 
+combined_df_amb$amb_category <- NA #ambiguity in category value
+combined_df_amb$amb_bridging <- NA #ambiguity regarding a bridging relationship
+
+#for concatenation of the final label
+combined_df_amb$amb_reason_pre <- NA #label for ambiguity regarding info status, bridging, etc. to concatenate
+combined_df_amb$amb_reason_gen <- NA #label for ambiguity in generic value to concatinate
+combined_df_amb$amb_reason_cat <- NA #label for ambiguity in category value to concatinate
+combined_df_amb$amb_reason_fin <- NA #result of concatenating the three labels above
+```
+
+##### Fill in Auxiliary Columns
+
+```{r}
+#info_status_1
+combined_df_amb$info_status_1 <- ifelse(
+  combined_df_amb$reference == "old",
+  "DO",
+  ifelse(
+    combined_df_amb$reference == "new",
+    "DN",
+    ifelse(
+      combined_df_amb$reference == "non_referring",
+      "non_referring",
+      NA  # Assign NA for other cases
+    )
+  )
+)
+
+#info_status_2
+combined_df_amb$info_status_2 <- ifelse(
+  combined_df_amb$ref_type_2 %in% c("phrase", "segment"),
+  "DO",
+  ifelse(
+    combined_df_amb$ref_type_2 == "new",
+    "DN",
+    ifelse(
+      combined_df_amb$ref_type_2 == "non_referring",
+      "non_referring",
+      ifelse(
+        combined_df_amb$ref_type_2 == "undef_reference",
+        "undef_reference",
+        ifelse(
+          combined_df_amb$ref_type_2 == "undef_reference_2",
+          "undef_reference_2",
+          NA  # Assign NA for other cases
+        )
+      )
+    )
+  )
+)
+
+#amb_generic
+###checked: when NA was assigned for generic/generic_2 -> amb_generic = NA (51), ref_type_2 = segment (51). This means, if there is an NA in generic_2 now, "no" is assigned, since this only happens when ref_typ_2 = segment, in which case generic_2 cannot be assigned according to the scheme, thus, an ambiguity between the generic values cannot be evaluated
+combined_df_amb$amb_generic <- ifelse(
+  is.na(combined_df_amb$generic_2) | is.na(combined_df_amb$generic),
+  "no", #only when ref_type_2 = segment -> generic_2 = NA
+  ifelse(
+    combined_df_amb$generic != combined_df_amb$generic_2,
+    "yes",
+    "no"
+        )
+  )
+
+#amb_category 
+combined_df_amb$amb_category <- ifelse(
+  is.na(combined_df_amb$category) | is.na(combined_df_amb$category_2),
+  "no",
+  ifelse(
+    combined_df_amb$category != combined_df_amb$category_2,
+    "yes",
+    "no"
+        )
+  )
+
+#amb_bridging
+combined_df_amb$amb_bridging <- ifelse(
+  is.na(combined_df_amb$related_object) | is.na(combined_df_amb$related_object_2),
+  "no", 
+  ifelse(
+    xor(combined_df_amb$related_object == "yes", combined_df_amb$related_object_2 == "yes"),
+    "yes",
+    "no"
+  )
+)
+```
+
+
+```{r}
+#fill auxiliary columns for concatinating the final label
+#amb_reason_gen
+combined_df_amb$amb_reason_gen <- case_when(
+  combined_df_amb$amb_generic == "yes" ~ "generic-value",
+  combined_df_amb$amb_generic == "no" ~ "",
+  TRUE ~ "CHECK_gen" #to verify if the assignment works correctly
+)
+
+#amb_reason_cat
+combined_df_amb$amb_reason_cat <- case_when(
+  combined_df_amb$amb_category == "yes" ~ "category",
+  combined_df_amb$amb_category == "no" ~ "",
+  TRUE ~ "CHECK_cat" #to verify if the assignment works correctly
+)
+```
+
+##### Referring vs. Non-referring
+
+```{r}
+###referring vs. non-referring
+#df_non_ref
+df_non_ref <- combined_df_amb %>%
+  filter(reference == "non_referring" | ref_type_2 == "non_referring") #the content of df_non_ref is always ambiguous between referring and non_referring
+
+#assign label
+df_non_ref$amb_reason_pre <- "referring vs. non_referring" #this can be done, because of the filter above
+```
+
+##### Referring vs. Undef_reference
+
+```{r}
+###referring vs. undefined reference
+#df_ref_undef_ref
+df_ref_undef_ref <- combined_df_amb %>%
+  filter(ref_type_2 == "undef_reference" | ref_type_2 == "undef_reference_2") #when reference = non_referring or undef_reference, no annotation as ambiguous possible
+
+#assign label
+df_ref_undef_ref$amb_reason_pre <- "referring vs. undefined_reference"
+```
+
+##### Referring vs. Referring
+
+```{r}
+# filter only for referring mentions and exclude potential unmarked markables
+combined_df_ref <- combined_df_amb %>%
+  filter(!(reference %in% c("unmarked", "non_referring")) & ref_type_2 != "non_referring") 
+```
+
+##### DN vs. DN
+
+```{r}
+###DN_DN
+#categorisation using filters
+#checked count of original df (df_DN_DN) and resulting df (df_DN_DN_fin) is the same
+
+#filter for cases that are new in both readings
+df_DN_DN <- combined_df_ref %>%
+  filter(info_status_1 == "DN" & info_status_2 == "DN")
+
+#this filter is used to identify DN vs. DN cases. Later they will get assigned an amb for generic and/or category
+#all markables are amb in either generic or category or both except one -> second reading has an object_2 
+df_DN_DN_only <- df_DN_DN %>%
+  filter(related_object == "no" & related_object_2 == "no")
+#assign label
+df_DN_DN_only$amb_reason_pre <- "DN vs. DN, no related objects"
+
+#this filter is used to identify DN vs. DN+bridging cases
+df_DN_DN_a <- df_DN_DN %>%
+  filter(amb_bridging == "yes")
+#assign label
+df_DN_DN_a$amb_reason_pre <- "DN vs. DN+bridging"
+
+#this filter is used to identify cases where the right entity for bridging was not identified but the relation is the same
+df_DN_DN_b <- df_DN_DN %>%
+  filter(related_object == "yes" & related_object_2 == "yes" & related_phrase != related_phrase_2 & related_rel == related_rel_2)
+#asssign label
+df_DN_DN_b$amb_reason_pre <- "identifying the right antecedent for bridging (DN)"
+
+#this filter is used to identify cases where the right entity for bridging was not identified and the relation is not the same
+df_DN_DN_c <- df_DN_DN %>%
+  filter(related_object == "yes" & related_object_2 == "yes" & related_phrase != related_phrase_2 & related_rel != related_rel_2)
+#asssign label
+df_DN_DN_c$amb_reason_pre <- "identifying the right antecedent for bridging (DN) and ambiguous relation"
+
+#this filter is used to identify cases where the bridging relation is ambigous
+df_DN_DN_d <- df_DN_DN %>%
+  filter(related_object == "yes" & related_object_2 == "yes" & related_phrase == related_phrase_2 & related_rel != related_rel_2)
+#asssign label
+df_DN_DN_d$amb_reason_pre <- "DN vs. DN; ambiguous relation"
+
+#this filter is used for cases where neither the related phrase nor the related relation is ambiguous. However there could be cases where category or generic is amb (in fact, only one)
+df_DN_DN_e <- df_DN_DN %>%
+  filter(related_object == "yes" & related_object_2 == "yes" & related_phrase == related_phrase_2 & related_rel == related_rel_2)
+#asssign label
+df_DN_DN_e$amb_reason_pre <- "DN vs. DN"
+
+
+#recombine the dfs
+df_DN_DN_fin <- rbind(df_DN_DN_only, df_DN_DN_a, df_DN_DN_b, df_DN_DN_c, df_DN_DN_d, df_DN_DN_e)
+
+#### -----> exclusion of one observation: DN vs. DN, no related object. It is amb in on_map, which is not evaluated here.
+
+df_DN_DN_fin <- df_DN_DN_fin %>%
+  filter(!(min_ids == "word_69" & file_name == "dia6-1_phrase_level.csv" & id == "markable_17"))
+
+
+#print(df_DN_DN_fin)
+
+```
+
+##### DN vs. DO
+
+```{r}
+###DN_DO
+df_DN_DO <- combined_df_ref %>%
+  filter(info_status_1 == "DN" & info_status_2 == "DO")
+
+#this filter is used to identy cases that are DO vs. DN without further attributes; single phrase antecedent
+df_DN_DO_a <- df_DN_DO %>%
+  filter(reference == "new" & ref_type_2 == "phrase" &
+           phrase_antecedent_2 == "single_phrase" &
+           related_object == "no" & related_object_2 == "no"
+           )
+#assign label
+df_DN_DO_a$amb_reason_pre <- "DO (single) vs. DN"
+
+#this filter is used to identy cases that are DO+bridging vs. DN; single phrase antecedent --------------------------> no such cases
+# df_DN_DO_a_1 <- df_DN_DO %>%
+#   filter(reference == "new" & ref_type_2 == "phrase" &
+#            phrase_antecedent_2 == "single_phrase" &
+#            related_object == "no" & related_object_2 == "yes"
+#            )
+# #assign label
+# df_DN_DO_a_1$amb_reason_pre <- "DO+bridging (single) vs. DN"
+
+#this filter is used to identy cases that are DO vs. DN+bridging single phrase antecedent 
+df_DN_DO_a_2 <- df_DN_DO %>%
+  filter(reference == "new" & ref_type_2 == "phrase" &
+           phrase_antecedent_2 == "single_phrase" &
+           related_object == "yes" & related_object_2 == "no"
+           )
+#assign label
+df_DN_DO_a_2$amb_reason_pre <- "DO (single) vs. DN+bridging"
+
+#this filter is used to identy cases that are DO (singel) + bridging vs. DN+bridging single phrase antecedent; same relation --------------------------> no such cases
+# df_DN_DO_a_3 <- df_DN_DO %>%
+#   filter(reference == "new" & ref_type_2 == "phrase" &
+#            phrase_antecedent_2 == "single_phrase" &
+#            related_object == "yes" & related_object_2 == "yes" &
+#            related_rel == related_rel_2
+#            )
+# #assign label
+# df_DN_DO_a_3$amb_reason_pre <- "DO+bridging (single) vs. DN+bridging"
+
+#this filter is used to identy cases that are DO (singel) + bridging vs. DN+bridging single phrase antecedent; different relation --------------------------> no such cases
+# df_DN_DO_a_4 <- df_DN_DO %>%
+#   filter(reference == "new" & ref_type_2 == "phrase" &
+#            phrase_antecedent_2 == "single_phrase" &
+#            related_object == "yes" & related_object_2 == "yes" &
+#            related_rel != related_rel_2
+#            )
+# #assign label
+# df_DN_DO_a_4$amb_reason_pre <- "DO+bridging (single) vs. DN+bridging; ambiguous relation"
+
+#this filter is used to identy cases that are DO vs. DN without further attributes; multiple phrase antecedents --------------------------> no such cases
+# df_DN_DO_b <- df_DN_DO %>%
+#   filter(reference == "new" & ref_type_2 == "phrase" &
+#            phrase_antecedent_2 == "multiple_phrases" &
+#            related_object == "no" & related_object_2 == "no"
+#            )
+# #assign label
+# df_DN_DO_b$amb_reason_pre <- "DO (multiple) vs. DN"
+
+#this filter is used to identy cases that are DO+bridging vs. DN ; multiple phrase antecedents --------------------------> no such cases
+# df_DN_DO_b_1 <- df_DN_DO %>%
+#   filter(reference == "new" & ref_type_2 == "phrase" &
+#            phrase_antecedent_2 == "multiple_phrases" &
+#            related_object == "no" & related_object_2 == "yes"
+#            )
+# #assign label
+# df_DN_DO_b_1$amb_reason_pre <- "DO+bridging (multiple) vs. DN"
+
+#this filter is used to identy cases that are DO vs. DN+bridging ; multiple phrase antecedents 
+df_DN_DO_b_2 <- df_DN_DO %>%
+  filter(reference == "new" & ref_type_2 == "phrase" &
+           phrase_antecedent_2 == "multiple_phrases" &
+           related_object == "yes" & related_object_2 == "no"
+           )
+#assign label
+df_DN_DO_b_2$amb_reason_pre <- "DO (multiple) vs. DN+bridging"
+
+# #this filter is used to identy cases that are DO+bridging vs. DN+bridging ; multiple phrase antecedents, related relation is the same --------------------------> no such cases
+# df_DN_DO_b_3 <- df_DN_DO %>%
+#   filter(reference == "new" & ref_type_2 == "phrase" &
+#            phrase_antecedent == "multiple_phrases" &
+#            related_object == "yes" & related_object_2 == "yes" &
+#            related_rel == related_rel_2
+#            )
+#assign label
+# df_DN_DO_b_3$amb_reason_pre <- "DO+bridging (multiple) vs. DN+bridging"
+
+#this filter is used to identy cases that are DO+bridging vs. DN+bridging ; multiple phrase antecedents, related relation is not the same --------------------------> no such cases
+# df_DN_DO_b_4 <- df_DN_DO %>%
+#   filter(reference == "new" & ref_type_2 == "phrase" &
+#            phrase_antecedent_2 == "multiple_phrases" &
+#            related_object == "yes" & related_object_2 == "yes" &
+#            related_rel != related_rel_2
+#            )
+# #assign label
+# df_DN_DO_b_4$amb_reason_pre <- "DO+bridging (multiple) vs. DN+bridging; ambiguous related relation"
+
+#this filter is used to identy cases that are DO+deixis vs. DN without further attributes
+df_DN_DO_c <- df_DN_DO %>%
+  filter(reference == "new" & ref_type_2 == "segment" &
+           related_object == "no" & related_object_2 == "no"
+           )
+#assign label
+df_DN_DO_c$amb_reason_pre <- "deixis vs. DN"
+
+#this filter is used to identy cases that are DO+deixis+bridging vs. DN without further attributes --------------------------> no such cases
+# df_DN_DO_c_1 <- df_DN_DO %>%
+#   filter(reference == "new" & ref_type_2 == "segment" &
+#            related_object == "no" & related_object_2 == "yes"
+#            )
+# #assign label
+# df_DN_DO_c_1$amb_reason_pre <- "deixis+bridging vs. DN"
+
+#this filter is used to identy cases that are DO+deixis vs. DN+bidging without further attributes
+df_DN_DO_c_2 <- df_DN_DO %>%
+  filter(reference == "new" & ref_type_2 == "segment" &
+           related_object == "yes" & related_object_2 == "no"
+           )
+#assign label
+df_DN_DO_c_2$amb_reason_pre <- "deixis vs. DN+bridging"
+
+#this filter is used to identy cases that are DO+deixis+bridging vs. DN+bidging without further attributes --------------------------> no such cases
+# df_DN_DO_c_3 <- df_DN_DO %>%
+#   filter(reference == "new" & ref_type_2 == "segment" &
+#            related_object == "yes" & related_object_2 == "yes"
+#            )
+# #assign label
+# df_DN_DO_c_3$amb_reason_pre <- "deixis+briidging vs. DN+bridging"
+
+
+# recombine the dfs
+df_DN_DO_fin <- rbind(df_DN_DO_a, df_DN_DO_a_2, df_DN_DO_b_2, df_DN_DO_c, df_DN_DO_c_2)
+
+#print(df_DN_DO_fin)
+```
+
+##### DO vs. DN
+
+```{r}
+###DO_DN
+#checked count of original df (df_DO_DN) and resulting df (df_DO_DN_fin) is the same
+
+df_DO_DN <- combined_df_ref %>%
+  filter(info_status_1 == "DO" & info_status_2 == "DN")
+
+#this filter is used to identy cases that are DO vs. DN without further attributes; single phrase antecedent
+df_DO_DN_a <- df_DO_DN %>%
+  filter(ref_type == "phrase" & ref_type_2 == "new" &
+           phrase_antecedent == "single_phrase" &
+           related_object == "no" & related_object_2 == "no"
+           )
+#assign label
+df_DO_DN_a$amb_reason_pre <- "DO (single) vs. DN"
+
+#this filter is used to identy cases that are DO+bridging vs. DN; single phrase antecedent
+df_DO_DN_a_1 <- df_DO_DN %>%
+  filter(ref_type == "phrase" & ref_type_2 == "new" &
+           phrase_antecedent == "single_phrase" &
+           related_object == "yes" & related_object_2 == "no"
+           )
+#assign label
+df_DO_DN_a_1$amb_reason_pre <- "DO+bridging (single) vs. DN"
+
+#this filter is used to identy cases that are DO vs. DN+bridging single phrase antecedent
+df_DO_DN_a_2 <- df_DO_DN %>%
+  filter(ref_type == "phrase" & ref_type_2 == "new" &
+           phrase_antecedent == "single_phrase" &
+           related_object == "no" & related_object_2 == "yes"
+           )
+#assign label
+df_DO_DN_a_2$amb_reason_pre <- "DO (single) vs. DN+bridging"
+
+#this filter is used to identy cases that are DO (singel) + bridging vs. DN+bridging single phrase antecedent; same relation
+df_DO_DN_a_3 <- df_DO_DN %>%
+  filter(ref_type == "phrase" & ref_type_2 == "new" &
+           phrase_antecedent == "single_phrase" &
+           related_object == "yes" & related_object_2 == "yes" &
+           related_rel == related_rel_2
+           )
+#assign label
+df_DO_DN_a_3$amb_reason_pre <- "DO+bridging (single) vs. DN+bridging"
+
+#this filter is used to identy cases that are DO (singel) + bridging vs. DN+bridging single phrase antecedent; different relation
+df_DO_DN_a_4 <- df_DO_DN %>%
+  filter(ref_type == "phrase" & ref_type_2 == "new" &
+           phrase_antecedent == "single_phrase" &
+           related_object == "yes" & related_object_2 == "yes" &
+           related_rel != related_rel_2
+           )
+#assign label
+df_DO_DN_a_4$amb_reason_pre <- "DO+bridging (single) vs. DN+bridging; ambiguous relation"
+
+#this filter is used to identy cases that are DO vs. DN without further attributes; multiple phrase antecedents
+df_DO_DN_b <- df_DO_DN %>%
+  filter(ref_type == "phrase" & ref_type_2 == "new" &
+           phrase_antecedent == "multiple_phrases" &
+           related_object == "no" & related_object_2 == "no"
+           )
+#assign label
+df_DO_DN_b$amb_reason_pre <- "DO (multiple) vs. DN"
+
+#this filter is used to identy cases that are DO+bridging vs. DN ; multiple phrase antecedents --------------------------> no such cases
+# df_DO_DN_b_1 <- df_DO_DN %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "new" &
+#            phrase_antecedent == "multiple_phrases" &
+#            related_object == "yes" & related_object_2 == "no"
+#            )
+# #assign label
+# df_DO_DN_b_1$amb_reason_pre <- "DO+bridging (multiple) vs. DN"
+
+#this filter is used to identy cases that are DO vs. DN+bridging ; multiple phrase antecedents
+df_DO_DN_b_2 <- df_DO_DN %>%
+  filter(ref_type == "phrase" & ref_type_2 == "new" &
+           phrase_antecedent == "multiple_phrases" &
+           related_object == "no" & related_object_2 == "yes"
+           )
+#assign label
+df_DO_DN_b_2$amb_reason_pre <- "DO (multiple) vs. DN+bridging"
+
+# #this filter is used to identy cases that are DO+bridging vs. DN+bridging ; multiple phrase antecedents, related relation is the same --------------------------> no such cases
+# df_DO_DN_b_3 <- df_DO_DN %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "new" &
+#            phrase_antecedent == "multiple_phrases" &
+#            related_object == "yes" & related_object_2 == "yes" &
+#            related_rel == related_rel_2
+#            )
+# #assign label
+# df_DO_DN_b_3$amb_reason_pre <- "DO+bridging (multiple) vs. DN+bridging"
+
+#this filter is used to identy cases that are DO+bridging vs. DN+bridging ; multiple phrase antecedents, related relation is not the same --------------------------> no such cases
+# df_DO_DN_b_4 <- df_DO_DN %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "new" &
+#            phrase_antecedent == "multiple_phrases" &
+#            related_object == "yes" & related_object_2 == "yes" &
+#            related_rel != related_rel_2
+#            )
+# #assign label
+# df_DO_DN_b_4$amb_reason_pre <- "DO+bridging (multiple) vs. DN+bridging; ambiguous related relation"
+
+#this filter is used to identy cases that are DO+deixis vs. DN without further attributes
+df_DO_DN_c <- df_DO_DN %>%
+  filter(ref_type == "segment" & ref_type_2 == "new" &
+           related_object == "no" & related_object_2 == "no"
+           )
+#assign label
+df_DO_DN_c$amb_reason_pre <- "deixis vs. DN"
+
+#this filter is used to identy cases that are DO+deixis+bridging vs. DN without further attributes --------------------------> no such cases
+# df_DO_DN_c_1 <- df_DO_DN %>%
+#   filter(ref_type == "segment" & ref_type_2 == "new" &
+#            related_object == "yes" & related_object_2 == "no"
+#            )
+# #assign label
+# df_DO_DN_c_1$amb_reason_pre <- "deixis+bridging vs. DN"
+
+#this filter is used to identy cases that are DO+deixis vs. DN+bidging without further attributes
+df_DO_DN_c_2 <- df_DO_DN %>%
+  filter(ref_type == "segment" & ref_type_2 == "new" &
+           related_object == "no" & related_object_2 == "yes"
+           )
+#assign label
+df_DO_DN_c_2$amb_reason_pre <- "deixis vs. DN+bridging"
+
+#this filter is used to identy cases that are DO+deixis+bridging vs. DN+bidging without further attributes --------------------------> no such cases
+# df_DO_DN_c_3 <- df_DO_DN %>%
+#   filter(ref_type == "segment" & ref_type_2 == "new" &
+#            related_object == "yes" & related_object_2 == "yes"
+#            )
+# #assign label
+# df_DO_DN_c_3$amb_reason_pre <- "deixis+briidging vs. DN+bridging"
+
+
+# recombine the dfs
+
+df_DO_DN_fin <- rbind(df_DO_DN_a, df_DO_DN_a_1, df_DO_DN_a_2, df_DO_DN_a_3, df_DO_DN_a_4, df_DO_DN_b, df_DO_DN_b_2, df_DO_DN_c, df_DO_DN_c_2)
+
+#print(df_DO_DN_fin)
+
+```
+
+##### DO vs. DO
+
+```{r}
+###DO-DO
+
+df_DO_DO <- combined_df_ref %>%
+  filter(info_status_1 == "DO" & info_status_2 == "DO")
+
+# filter for identifying the right antecedent
+df_DO_DO_a <- df_DO_DO %>%
+  filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+           phrase_antecedent == "single_phrase" & phrase_antecedent_2 == "single_phrase" &
+           single_phrase_antecedent != single_phrase_antecedent_2 &
+           related_object == "no" & related_object_2 == "no" #thus, cannot have related_phrase
+           )
+#assign label
+df_DO_DO_a$amb_reason_pre <- "identifying the right antecedent" #amb_ante_deixis and amb_bridging are always "no" in df_DO_DO_a
+
+# filter for identifying the right antecedent + bridging in 1
+df_DO_DO_b <- df_DO_DO %>%
+  filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+           phrase_antecedent == "single_phrase" & phrase_antecedent_2 == "single_phrase" &
+           single_phrase_antecedent != single_phrase_antecedent_2 &
+           related_object == "yes" & related_object_2 == "no" 
+           )
+#assign label
+df_DO_DO_b$amb_reason_pre <- "identifying the right antecedent + bridging in 1" 
+
+# filter for assigning DO vs. DO; amb in generic and category added later
+df_DO_DO_b1 <- df_DO_DO %>%
+  filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+           phrase_antecedent == "single_phrase" & phrase_antecedent_2 == "single_phrase" &
+           single_phrase_antecedent == single_phrase_antecedent_2 &
+           related_object == "no" & related_object_2 == "no" 
+           )
+#assign label
+df_DO_DO_b1$amb_reason_pre <- "DO vs. DO" ### -----------------------> one observation: GB mrcnf10g word_1137; NOT ambiguous
+
+# filter for identifying the right antecedent + bridging in 2
+df_DO_DO_c <- df_DO_DO %>%
+  filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+           phrase_antecedent == "single_phrase" & phrase_antecedent_2 == "single_phrase" &
+           single_phrase_antecedent != single_phrase_antecedent_2 &
+           related_object == "no" & related_object_2 == "yes" 
+           )
+#assign label
+df_DO_DO_c$amb_reason_pre <- "identifying the right antecedent + bridging in 2" 
+
+# filter for identifying the right antecedent + bridging in both ---------------------------------------> no such cases
+# df_DO_DO_c1 <- df_DO_DO %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+#            phrase_antecedent == "single_phrase" & phrase_antecedent_2 == "single_phrase" &
+#            single_phrase_antecedent != single_phrase_antecedent_2 &
+#            related_object == "yes" & related_object_2 == "yes"
+#            )
+
+
+# filter for identifying the right antecedent for bridging ---------------------------------------> no such cases
+# df_DO_DO_c2 <- df_DO_DO %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+#            phrase_antecedent == "single_phrase" & phrase_antecedent_2 == "single_phrase" &
+#            single_phrase_antecedent == single_phrase_antecedent_2 &
+#            related_object == "yes" & related_object_2 == "yes"
+#            )
+
+
+# filter for antecedent vs. deixis
+df_DO_DO_d <- df_DO_DO %>%
+  filter(ref_type == "phrase" & ref_type_2 == "segment" &
+           related_object == "no" & related_object_2 == "no")
+#assign label
+df_DO_DO_d$amb_reason_pre <- "antecedent vs. deixis"
+
+# filter for antecedent+bridging vs. deixis ---------------------------------------> no such cases
+# df_DO_DO_d_1 <- df_DO_DO %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "segment" &
+#            related_object == "yes" & related_object_2 == "no")
+# #assign label
+# df_DO_DO_d_2$amb_reason_pre <- "antecedent+bridging vs. deixis"
+
+# filter for antecedent vs. deixis+bridging ---------------------------------------> no such cases
+# df_DO_DO_d_2 <- df_DO_DO %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "segment" &
+#            related_object == "no" & related_object_2 == "yes")
+# #assign label
+# df_DO_DO_d_2$amb_reason_pre <- "antecedent vs. deixis+bridging"
+
+# filter for antecedent+brdiging vs. deixis+bridging ---------------------------------------> no such cases
+# df_DO_DO_d_3 <- df_DO_DO %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "segment" &
+#            related_object == "no" & related_object_2 == "yes")
+# #assign label
+# df_DO_DO_d_3$amb_reason_pre <- "antecedent+bridging vs. deixis+bridging"
+
+
+# filter for antecedent vs. deixis
+df_DO_DO_e <- df_DO_DO %>%
+  filter(ref_type == "segment" & ref_type_2 == "phrase" &
+           related_object == "no" & related_object_2 == "no" 
+         )
+#assign label
+df_DO_DO_e$amb_reason_pre <- "antecedent vs. deixis" 
+
+# filter for antecedent vs. deixis+related_object
+df_DO_DO_e1 <- df_DO_DO %>%
+  filter(ref_type == "segment" & ref_type_2 == "phrase" &
+           related_object == "yes" & related_object_2 == "no" 
+         )
+#assign label
+df_DO_DO_e1$amb_reason_pre <- "antecedent vs. deixis+bridging" 
+
+# filter for antecedent+related_object vs. deixis
+df_DO_DO_e2 <- df_DO_DO %>%
+  filter(ref_type == "segment" & ref_type_2 == "phrase" &
+           related_object == "no" & related_object_2 == "yes" 
+         )
+#assign label
+df_DO_DO_e2$amb_reason_pre <- "antecedent+bridging vs. deixis"
+
+# filter for antecedent+related_object vs. deixis+related object ----------------------------------------> no such cases
+# df_DO_DO_e3 <- df_DO_DO %>%
+#   filter(ref_type == "segment" & ref_type_2 == "phrase" &
+#            related_object == "yes" & related_object_2 == "yes" 
+#          )
+# #assign label
+# df_DO_DO_e3$amb_reason_pre <- "antecedent+related_object vs. deixis"+related object
+
+# filter for amb in deixis antecedent
+df_DO_DO_f <- df_DO_DO %>%
+  filter(ref_type == "segment" & ref_type_2 == "segment" &
+           segment_antecedent != segment_antecedent_2 &
+           related_object == "no" & related_object_2 == "no" 
+         )
+#assign label
+df_DO_DO_f$amb_reason_pre <- "identifying the right segment for deixis"
+
+# filter for amb in deixis antecedent + related object in 1
+df_DO_DO_f1 <- df_DO_DO %>%
+  filter(ref_type == "segment" & ref_type_2 == "segment" &
+           segment_antecedent != segment_antecedent_2 &
+           related_object == "yes" & related_object_2 == "no" 
+         )
+
+df_DO_DO_f1$amb_reason_pre <- "identifying the right segment for deixis + related_object in 1"
+
+# filter for amb in deixis antecedent + related object in 2  ----------------------------------------> no such cases
+# df_DO_DO_f2 <- df_DO_DO %>%
+#   filter(ref_type == "segment" & ref_type_2 == "segment" &
+#            segment_antecedent != segment_antecedent_2 &
+#            related_object == "no" & related_object_2 == "yes" 
+#          )
+#assign label
+# df_DO_DO_f2$amb_reason_pre <- "identifying the right segment for deixis + related_object in 2"
+
+# filter for amb in deixis antecedent + related object in both ---------------------------------------> no such cases
+# df_DO_DO_f3 <- df_DO_DO %>%
+#   filter(ref_type == "segment" & ref_type_2 == "segment" &
+#            segment_antecedent != segment_antecedent_2 &
+#            related_object == "yes" & related_object_2 == "yes" 
+#          )
+# #assign label
+# df_DO_DO_f3$amb_reason_pre <- "identifying the right segment for deixis + related_object in both"
+
+# filter for single vs. multiple antecedents
+df_DO_DO_g <- df_DO_DO %>%
+  filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+           phrase_antecedent == "multiple_phrases" & phrase_antecedent_2 == "single_phrase" &
+           related_object == "no" & related_object_2 == "no"
+           )
+#assign label
+df_DO_DO_g$amb_reason_pre <- "single vs. multiple antecedents"
+
+# filter for single vs. multiple antecedents
+df_DO_DO_g4 <- df_DO_DO %>%
+  filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+           phrase_antecedent == "single_phrase" & phrase_antecedent_2 == "multiple_phrases" &
+           related_object == "no" & related_object_2 == "no"
+           )
+#assign label
+df_DO_DO_g4$amb_reason_pre <- "single vs. multiple antecedents"
+
+# filter for single vs. multiple antecedents and related object in 1 ---------------------------------------> no such cases
+# df_DO_DO_g1 <- df_DO_DO %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+#            phrase_antecedent == "multiple_phrases" & phrase_antecedent_2 == "single_phrase" &
+#            related_object == "yes" & related_object_2 == "no"
+#            )
+# #assign label
+# df_DO_DO_g1$amb_reason_pre <- "single vs. multiple antecedents and related object in 1"
+
+# filter for single vs. multiple antecedents and related object in 2 ---------------------------------------> no such cases
+# df_DO_DO_g2 <- df_DO_DO %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+#            phrase_antecedent == "multiple_phrases" & phrase_antecedent_2 == "single_phrase" &
+#            related_object == "no" & related_object_2 == "yes"
+#            )
+# #assign label
+# df_DO_DO_g2$amb_reason_pre <- "single vs. multiple antecedents and related object in 2"
+
+# filter for single vs. multiple antecedents and related object in both ---------------------------------------> no such cases
+# df_DO_DO_g3 <- df_DO_DO %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+#            phrase_antecedent == "multiple_phrases" & phrase_antecedent_2 == "single_phrase" &
+#            related_object == "yes" & related_object_2 == "yes"
+#            )
+# #assign label
+# df_DO_DO_g3$amb_reason_pre <- "single vs. multiple antecedents and related object in both"
+
+# filter for identifying the right antecedents
+df_DO_DO_h <- df_DO_DO %>%
+  filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+           phrase_antecedent == "multiple_phrases" & phrase_antecedent_2 == "multiple_phrases" &
+           multiple_phrase_antecedents != multiple_phrase_antecedents_2 &
+           related_object == "no" & related_object_2 == "no"
+           )
+#assign label
+df_DO_DO_h$amb_reason_pre <- "identifying the right antecedents"
+
+# filter for identifying the right antecedents + related_object in 1 ---------------------------------------> no such cases
+# df_DO_DO_h1 <- df_DO_DO %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+#            phrase_antecedent == "multiple_phrases" & phrase_antecedent_2 == "multiple_phrases" &
+#            multiple_phrase_antecedents != multiple_phrase_antecedents_2 &
+#            related_object == "yes" & related_object_2 == "no"
+#            )
+# #assign label
+# df_DO_DO_h1$amb_reason_pre <- "identifying the right antecedents + related_object in 1"
+
+# filter for identifying the right antecedents + related_object in 2 ---------------------------------------> no such cases
+# df_DO_DO_h2 <- df_DO_DO %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+#            phrase_antecedent == "multiple_phrases" & phrase_antecedent_2 == "multiple_phrases" &
+#            multiple_phrase_antecedents != multiple_phrase_antecedents_2 &
+#            related_object == "no" & related_object_2 == "yes"
+#            )
+# #assign label
+# df_DO_DO_h2$amb_reason_pre <- "identifying the right antecedents + related_object in 2"
+
+# filter for identifying the right antecedents + related_object in both ---------------------------------------> no such cases
+# df_DO_DO_h3 <- df_DO_DO %>%
+#   filter(ref_type == "phrase" & ref_type_2 == "phrase" &
+#            phrase_antecedent == "multiple_phrases" & phrase_antecedent_2 == "multiple_phrases" &
+#            multiple_phrase_antecedents == multiple_phrase_antecedents_2 &
+#            related_object == "yes" & related_object_2 == "yes"
+#            )
+# #assign label
+# df_DO_DO_h3$amb_reason_pre <- "identifying the right antecedents + related_object in both"
+
+
+### combinig the dfs; df_DO_DO_b1 is not included, since one observation that is NOT ambiguous DO vs. DO
+df_DO_DO_fin <- rbind(df_DO_DO_a, df_DO_DO_b, df_DO_DO_c, df_DO_DO_d, df_DO_DO_e, df_DO_DO_e1, df_DO_DO_e2, df_DO_DO_f, df_DO_DO_f1, df_DO_DO_g, df_DO_DO_g4, df_DO_DO_h)
+```
+
+##### Recombine all Data Frames that Contain Referring Markables
+
+```{r}
+#recombine the categorised dfs of referring markables
+df_categorised_referring <- rbind(df_DN_DN_fin, df_DO_DO_fin, df_DO_DN_fin, df_DN_DO_fin, df_ref_undef_ref)
+print(df_categorised_referring)
+
+```
+
+##### Recombine all categorised Data Frames
+
+```{r}
+#recombine data frames
+df_categorised_1 <- rbind(df_categorised_referring, df_non_ref)
+
+print(df_categorised_1)
+```
+
+##### Checking Double Appearing Markables
+
+```{r}
+#check if a markable does not appear twice or more in the df
+double_markables <- df_categorised_1 %>%
+  group_by(file_name) %>% # group by the file the markable appears in
+  filter(duplicated(id) | duplicated(id, fromLast = TRUE)) # use function to check for duplicate ids
+
+print(double_markables) #if this data frame is empty, there are no markables that appear twice in the original df
+```
+
+##### Ambiguity in Generic and/or Category
+
+```{r}
+#create final data frame
+df_categorised_fin <- df_categorised_1
+
+#get rid of the superfluous semicolons 
+concatenate_with_condition <- function(row, columns, separator = "; ", include_empty = FALSE) {
+  selected_row <- row[columns]
+  
+  if (!include_empty) {
+    selected_row <- selected_row[selected_row != ""]
+  }
+  
+  result <- paste(selected_row, collapse = separator)
+  return(result)
+}
+
+#specify columns to use
+columns_to_use <- c("amb_reason_pre", "amb_reason_gen", "amb_reason_cat")
+
+#concatenate and put in amb_reason_fin
+df_categorised_fin$amb_reason_fin <- apply(df_categorised_fin[, columns_to_use], 1, concatenate_with_condition, 
+                     columns = columns_to_use, separator = "; ", include_empty = FALSE)
+
+```
+
+#### Full List of Labels and Count
+
+```{r, echo=FALSE}
+print("List of labels and their count in ARRAU and PD:")
+table(df_categorised_fin$amb_reason_fin)
+
+print(df_categorised_fin)
+print(combined_df_amb)
+```
+
