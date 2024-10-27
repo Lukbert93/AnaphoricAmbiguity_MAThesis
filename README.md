@@ -6,8 +6,8 @@ The study was carried out by Lukas Beiske, University of Konstanz, Department of
 
 ## Quick Links
 
-* [Rule Based Process Script (R)](scripts/table.xlsx)
-* [Descriptive Statistics Script (R)](scripts/)
+* [Rule Based Process Script (R)](scripts/RuleBasedFramework.Rmd)
+* [Descriptive Statistics Script with visualisations (HTML)](scripts/DescriptiveStatisticsVisual.html)
 
 ## Study Design
 
@@ -18,7 +18,11 @@ The study was carried out by Lukas Beiske, University of Konstanz, Department of
 In order to run the R scripts and perform the rule based process, the necessary Corpora (i.e., ARRAU and PD) need to be loaded. To do so, customize the paths as in the example below:
 
 ```r
-
+#path to input folders with XML files
+folders_xml <- c("../Statistics/data/ARRAU/RST",
+                 "../Statistics/data/ARRAU/Trains_91",
+                 "../Statistics/data/PD/gutenberg",
+                 "../Statistics/data/PD/wiki")
 ```
 
 ## Repository Structure
