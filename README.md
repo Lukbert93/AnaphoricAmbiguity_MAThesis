@@ -6,7 +6,7 @@ The study was carried out by Lukas Beiske, University of Konstanz, Department of
 
 ## Quick Links
 
-* [Rule Based Process Script (R)](scripts/RuleBasedFramework.Rmd)
+* [Rule Based Framework (R)](scripts/RuleBasedFramework.Rmd)
 * [Descriptive Statistics Script with visualisations (HTML)](scripts/DescriptiveStatisticsVisual.html)
 
 ## Study Design
@@ -19,10 +19,10 @@ In order to run the R scripts and perform the rule based process, the necessary 
 
 ```r
 #path to input folders with XML files
-folders_xml <- c("../Statistics/data/ARRAU/RST",
-                 "../Statistics/data/ARRAU/Trains_91",
-                 "../Statistics/data/PD/gutenberg",
-                 "../Statistics/data/PD/wiki")
+folders_xml <- c("../data/ARRAU/RST",
+                 "../data/ARRAU/Trains_91",
+                 "../data/PD/gutenberg",
+                 "../data/PD/wiki")
 ```
 
 ## Repository Structure
@@ -35,13 +35,16 @@ AnaphoricAmbiguity_MAThesis
     |--- documentation/
         |
         |--- study-design.pdf
+        |--- study-design.png
                 The used methodlogy in the theis.
     |--- scripts/
         |
-        |--- test.md
-                The used methodlogy in the theis.
-        |--- test.md
-                The used methodlogy in the theis.
+        |--- RuleBasedFramework.Rmd
+                Main script for the rule based categorisation process in R (markdown).
+        |--- DescriptiveStatistics.Rmd
+                Script for executing the descriptive statistics in addition to the rule based categorisation in R (markdown).
+        |--- DescriptiveStatisticsVisual.html
+                Output for the descriptive statistics in HTML including the visualisations. 
     |--- figures/
         |
         |--- test.md
