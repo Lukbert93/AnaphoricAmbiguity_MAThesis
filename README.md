@@ -1,6 +1,6 @@
 # Anaphora and Ambiguity - An Analysis of Disagreement in Anaphoric Annotation
 
-This repository is a companion page for the Master's thesis, containing the supplementary material and necessary appendices to replicate and reproduce the study and its results.
+This repository is a companion page for the Master's thesis, containing the scripts to replicate and reproduce the study and its results.
 
 The study was carried out by Lukas Beiske, University of Konstanz, Department of Linguistics, 2024.
 
@@ -26,7 +26,7 @@ folders_xml <- c("../data/ARRAU/RST",
 ```
 
 ## Repository Structure
-This repository is organised along to the study design.
+This repository is organised as follows:
 
 ```
 AnaphoricAmbiguity_MAThesis
