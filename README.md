@@ -45,9 +45,12 @@ AnaphoricAmbiguity_MAThesis
                 Script for executing the descriptive statistics in addition to the rule based categorisation in R (markdown).
         |--- DescriptiveStatisticsVisual.html
                 Output for the descriptive statistics in HTML including the visualisations. 
-    |--- figures/
+    |--- heatmaps/
         |
-        |--- test.md
-                The used methodlogy in the theis.
+        |--- heatmaps_category_values/*
+                Heatmaps describing the ambiguities in category values.
+        |
+        |--- heatmaps_generic_values/*
+                Heatmaps describing the ambiguities in generic values.
                     
 ```
